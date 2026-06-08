@@ -1,0 +1,31 @@
+{
+  "sensor_readings": {
+    "device_id": "设备编号",
+    "reading_time": "读数时间",
+    "water_pressure": "水压(MPa)",
+    "flow_rate": "流量(m³/h)",
+    "temperature": "温度(℃)",
+    "status": "状态",
+    "inspector": "巡检员"
+  },
+  "inspection_shifts": {
+    "shift_id": "班次编号",
+    "shift_date": "巡检日期",
+    "shift_type": "班次类型",
+    "inspector": "巡检员",
+    "start_time": "开始时间",
+    "end_time": "结束时间",
+    "equipment_checked": "检查设备"
+  },
+  "equipment_ledger": {
+    "device_id": "设备编号",
+    "device_name": "设备名称",
+    "location": "安装位置",
+    "install_date": "安装日期",
+    "manufacturer": "生产厂家",
+    "model": "型号",
+    "pressure_low_limit": "水压下限(MPa)",
+    "pressure_high_limit": "水压上限(MPa)",
+    "status": "设备状态"
+  }
+}

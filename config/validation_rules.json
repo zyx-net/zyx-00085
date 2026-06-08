@@ -1,0 +1,19 @@
+{
+  "sensor_readings": {
+    "required_columns": ["device_id", "reading_time", "water_pressure"],
+    "unique_columns": [],
+    "value_ranges": {
+      "water_pressure": {"min": 0, "max": 2.0},
+      "flow_rate": {"min": 0, "max": 1000},
+      "temperature": {"min": -10, "max": 60}
+    }
+  },
+  "inspection_shifts": {
+    "required_columns": ["shift_id", "shift_date", "inspector"],
+    "unique_columns": ["shift_id"]
+  },
+  "equipment_ledger": {
+    "required_columns": ["device_id", "device_name", "location"],
+    "unique_columns": ["device_id"]
+  }
+}

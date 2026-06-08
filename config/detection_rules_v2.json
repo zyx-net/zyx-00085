@@ -1,0 +1,48 @@
+{
+  "version": "v2",
+  "description": "泵房巡检异常检测规则第二版 - 优化水压突降阈值",
+  "created_at": "2026-06-01",
+  "based_on": "v1",
+  "rules": {
+    "pressure_sudden_drop": {
+      "enabled": true,
+      "name": "水压突降",
+      "threshold": 0.10,
+      "time_window_minutes": 15,
+      "description": "15分钟内水压下降超过0.10MPa（v2优化）"
+    },
+    "long_time_offline": {
+      "enabled": true,
+      "name": "长时间离线",
+      "threshold_hours": 4,
+      "description": "设备超过4小时无读数"
+    },
+    "reading_backward": {
+      "enabled": true,
+      "name": "读数倒退",
+      "threshold": 15.0,
+      "description": "流量下降超过15m³/h判定为读数倒退"
+    },
+    "duplicate_report": {
+      "enabled": true,
+      "name": "重复上报",
+      "time_window_seconds": 120,
+      "description": "同一设备120秒内多次上报（v2优化）"
+    },
+    "unregistered_device": {
+      "enabled": true,
+      "name": "未登记设备",
+      "description": "读数中出现设备台账中不存在的设备编号"
+    },
+    "same_time_different_reading": {
+      "enabled": true,
+      "name": "同时刻不同读数",
+      "description": "同一设备同一时间点出现不同读数"
+    },
+    "pressure_out_of_range": {
+      "enabled": true,
+      "name": "水压超限",
+      "description": "水压超出设备台账设定的上下限"
+    }
+  }
+}
