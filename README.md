@@ -159,7 +159,7 @@ python main.py import-shifts --batch-id 1
 ```bash
 python main.py detect --batch-id 1
 ```
-预期输出（使用 v2 规则）：共发现 **13 条** 异常
+预期输出：共发现 **13 条** 异常（使用默认激活的最新版本规则）
 - 水压超限: 2 条
 - 长时间离线: 2 条
 - 读数倒退: 1 条
@@ -268,6 +268,181 @@ python main.py import-readings --batch-id 3 --file sample_data/sensor_readings_w
 python main.py detect --batch-id 3
 ```
 预期输出：识别到时区问题，异常检测正常运行
+
+## 巡检方案模板功能
+
+### 功能概述
+
+巡检方案模板允许用户将常用的规则版本、阈值覆盖、备注字段和报告输出偏好保存为命名模板，后续分析时直接套用，避免每次手工拼接参数。模板持久化到 SQLite 数据库，跨程序重启后依然可用。
+
+### 模板包含的配置项
+
+| 配置项 | 说明 | 示例 |
+|-------|------|------|
+| 规则版本 | 指定使用 v1 或 v2 规则 | `v2` |
+| 阈值覆盖 | 覆盖规则中的特定阈值 | `{"pressure_sudden_drop": {"threshold": 0.15}}` |
+| 备注字段 | 预置的备注内容，应用模板时自动添加 | `[{"content": "月度巡检开始", "remark_type": "general"}]` |
+| 报告偏好 | 报告输出设置 | `{"include_raw_data": true, "filename_prefix": "月度报告"}` |
+
+### 命令列表
+
+| 命令 | 说明 |
+|------|------|
+| `save-template` | 保存新模板 |
+| `list-templates` | 列出所有模板 |
+| `show-template` | 查看模板详情 |
+| `apply-template` | 应用模板创建批次并运行分析 |
+| `rename-template` | 重命名模板 |
+| `delete-template` | 删除模板 |
+| `export-template` | 导出单个模板为 JSON |
+| `import-template` | 从 JSON 导入单个模板 |
+| `export-all-templates` | 批量导出所有模板 |
+| `import-templates-bulk` | 批量导入多个模板 |
+
+### 详细用法
+
+#### 1. 保存模板
+
+```bash
+# 保存一个简单模板
+python main.py save-template --name "月度常规巡检" --rule-version v2 --description "月度常规泵房巡检方案"
+
+# 保存含阈值覆盖的模板
+python main.py save-template --name "严格检测方案" --rule-version v2 ^
+  --description "更严格的阈值，用于季度专项检测" ^
+  --threshold-overrides "{\"pressure_sudden_drop\": {\"threshold\": 0.05, \"time_window_minutes\": 10}, \"long_time_offline\": {\"threshold_hours\": 2}}"
+
+# 保存含预置备注和报告偏好的模板
+python main.py save-template --name "完整月度方案" --rule-version v2 ^
+  --description "包含预置备注和报告配置的完整方案" ^
+  --remark-fields "[{\"content\": \"2026年月度巡检开始\", \"remark_type\": \"general\", \"operator\": \"系统\"}, {\"content\": \"请按标准流程复核异常\", \"remark_type\": \"maintenance\", \"operator\": \"管理员\"}]" ^
+  --report-preferences "{\"include_raw_data\": true, \"include_remarks\": true, \"filename_prefix\": \"月度巡检报告\"}"
+```
+
+#### 2. 查看模板
+
+```bash
+# 列出所有模板
+python main.py list-templates
+
+# 查看模板详情（通过名称）
+python main.py show-template --name "月度常规巡检"
+
+# 查看模板详情（通过ID）
+python main.py show-template --id 1
+```
+
+#### 3. 应用模板
+
+```bash
+# 仅创建批次，不导入数据
+python main.py apply-template --name "月度常规巡检" --batch-name "2026年6月巡检"
+
+# 创建批次并导入数据、运行检测
+python main.py apply-template --name "月度常规巡检" ^
+  --batch-name "2026年6月巡检" ^
+  --source sample_data/sensor_readings_with_anomalies.csv
+
+# 完整流程：创建批次 + 导入数据 + 检测 + 自动添加备注 + 导出报告
+python main.py apply-template --name "完整月度方案" ^
+  --batch-name "2026年6月完整巡检" ^
+  --source sample_data/sensor_readings_with_anomalies.csv ^
+  --export
+```
+
+#### 4. 管理模板
+
+```bash
+# 重命名模板
+python main.py rename-template --id 1 --new-name "季度专项巡检"
+
+# 删除模板（通过名称）
+python main.py delete-template --name "月度常规巡检"
+
+# 删除模板（通过ID）
+python main.py delete-template --id 1
+```
+
+#### 5. 导入导出
+
+```bash
+# 导出单个模板到 JSON
+python main.py export-template --name "月度常规巡检" --output template_monthly.json
+
+# 导出所有模板到一个 JSON 文件
+python main.py export-all-templates --output all_templates.json
+
+# 导入模板（默认：同名冲突时报错）
+python main.py import-template --file template_monthly.json
+
+# 导入模板（同名冲突时自动重命名）
+python main.py import-template --file template_monthly.json --auto-rename
+
+# 导入模板（同名冲突时跳过）
+python main.py import-template --file template_monthly.json --skip-existing
+
+# 批量导入多个模板
+python main.py import-templates-bulk --file all_templates.json --auto-rename
+```
+
+### 错误处理
+
+模板操作包含完善的错误提示：
+
+- **模板名冲突**：保存或重命名时，如果名称已存在，会明确提示"模板名称 'XXX' 已存在"
+- **缺少必填字段**：导入 JSON 时缺少 `name` 或 `rule_version`，会提示具体缺少的字段
+- **非法阈值**：阈值为负数或非数字时，会提示"规则 'XXX' 的 'YYY' 必须是数字"或"不能为负数"
+- **规则版本不存在**：指定的规则版本不存在时会报错
+- **导入冲突处理**：不会静默覆盖，必须显式指定 `--auto-rename` 或 `--skip-existing`
+
+### 导出的 JSON 格式
+
+```json
+{
+  "name": "月度常规巡检",
+  "description": "月度常规泵房巡检方案",
+  "rule_version": "v2",
+  "threshold_overrides": {
+    "pressure_sudden_drop": {
+      "threshold": 0.15
+    }
+  },
+  "remark_fields": [
+    {
+      "content": "月度巡检开始",
+      "remark_type": "general",
+      "operator": "系统"
+    }
+  ],
+  "report_preferences": {
+    "include_raw_data": true,
+    "filename_prefix": "月度报告"
+  },
+  "created_by": "system",
+  "exported_at": "2026-06-08T20:30:00.123456"
+}
+```
+
+### 批量导出的 JSON 格式
+
+```json
+{
+  "exported_at": "2026-06-08T20:30:00.123456",
+  "template_count": 2,
+  "templates": [
+    {
+      "name": "月度常规巡检",
+      "rule_version": "v2",
+      "...": "..."
+    },
+    {
+      "name": "严格检测方案",
+      "rule_version": "v2",
+      "...": "..."
+    }
+  ]
+}
+```
 
 ## 技术栈
 

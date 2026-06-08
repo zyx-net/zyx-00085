@@ -153,3 +153,18 @@ class Remark(Base):
     batch = relationship("Batch", back_populates="remarks")
     anomaly = relationship("Anomaly", back_populates="remarks")
     previous_remark = relationship("Remark", remote_side=[id], backref="next_remarks")
+
+
+class InspectionTemplate(Base):
+    __tablename__ = "inspection_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True, index=True)
+    description = Column(Text)
+    rule_version = Column(String(50), nullable=False)
+    threshold_overrides = Column(Text)
+    remark_fields = Column(Text)
+    report_preferences = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    created_by = Column(String(100), default="system")

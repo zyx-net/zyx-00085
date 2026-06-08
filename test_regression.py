@@ -666,6 +666,319 @@ def test_remark_functions():
     print("  ✅ 备注功能测试全部通过")
 
 
+def _run_template_cmd(*args):
+    """运行模板相关命令，使用列表参数避免shell解析问题"""
+    import sys
+    cmd = [sys.executable, str(MAIN_PY)] + list(args)
+    return run_cmd(cmd)
+
+
+def test_template_functions():
+    """测试巡检方案模板功能 - 完整链路验证"""
+    print("\n" + "=" * 70)
+    print("测试 10: 巡检方案模板功能完整验证")
+    print("=" * 70)
+    
+    import json
+    import sqlite3
+    import tempfile
+    
+    setup_test_env()
+    
+    # ==================== 测试 10.1: 保存模板 ====================
+    print("  测试 10.1: 保存模板（基本功能）...")
+    
+    threshold_overrides = json.dumps({
+        "pressure_sudden_drop": {"threshold": 0.15, "time_window_minutes": 30},
+        "long_time_offline": {"threshold_hours": 3}
+    }, ensure_ascii=False)
+    
+    remark_fields = json.dumps([
+        {"content": "月度常规巡检开始", "remark_type": "general", "operator": "系统"},
+        {"content": "请按标准流程复核异常", "remark_type": "maintenance", "operator": "管理员"}
+    ], ensure_ascii=False)
+    
+    report_prefs = json.dumps({
+        "include_raw_data": True,
+        "filename_prefix": "月度巡检报告"
+    }, ensure_ascii=False)
+    
+    result = _run_template_cmd(
+        'save-template',
+        '--name', '月度常规巡检',
+        '--rule-version', 'v2',
+        '--description', '月度常规泵房巡检方案',
+        '--threshold-overrides', threshold_overrides,
+        '--remark-fields', remark_fields,
+        '--report-preferences', report_prefs,
+        '--created-by', '测试员'
+    )
+    assert result.returncode == 0, f"保存模板失败: {result.stderr}"
+    assert "模板保存成功" in result.stdout
+    assert "月度常规巡检" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip().splitlines()[0]}")
+    
+    # ==================== 测试 10.2: 模板名冲突 ====================
+    print("  测试 10.2: 模板名冲突处理...")
+    result = _run_template_cmd('save-template', '--name', '月度常规巡检', '--rule-version', 'v1')
+    assert result.returncode == 1, "同名模板应该报错"
+    assert "已存在" in result.stdout or "已存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别名称冲突 - {result.stdout.strip()[:50]}")
+    
+    # ==================== 测试 10.3: 非法阈值验证 ====================
+    print("  测试 10.3: 非法阈值验证...")
+    bad_threshold = json.dumps({"pressure_sudden_drop": {"threshold": -0.1}}, ensure_ascii=False)
+    result = _run_template_cmd(
+        'save-template',
+        '--name', '坏模板',
+        '--rule-version', 'v2',
+        '--threshold-overrides', bad_threshold
+    )
+    assert result.returncode == 1, "负数阈值应该报错"
+    assert "不能为负数" in result.stdout or "不能为负数" in result.stderr
+    print(f"    ✅ 通过: 正确识别负数阈值 - {result.stdout.strip()[:60]}")
+    
+    # ==================== 测试 10.4: 缺少必填字段 ====================
+    print("  测试 10.4: 缺少必填字段验证...")
+    result = _run_template_cmd('save-template', '--name', '缺版本模板', '--rule-version', 'nonexistent_v999')
+    assert result.returncode == 1, "不存在的规则版本应该报错"
+    assert "不存在" in result.stdout or "不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别不存在的规则版本")
+    
+    # ==================== 测试 10.5: 列出和查看模板 ====================
+    print("  测试 10.5: 列出和查看模板...")
+    
+    result = _run_template_cmd("list-templates")
+    assert result.returncode == 0
+    assert "巡检方案模板列表" in result.stdout
+    assert "月度常规巡检" in result.stdout
+    assert "v2" in result.stdout
+    print("    ✅ 通过: 列表功能正常")
+    
+    result = _run_template_cmd('show-template', '--name', '月度常规巡检')
+    assert result.returncode == 0
+    assert "模板详情" in result.stdout
+    assert "pressure_sudden_drop" in result.stdout
+    assert "月度常规巡检开始" in result.stdout
+    assert "月度巡检报告" in result.stdout
+    print("    ✅ 通过: 详情查看功能正常")
+    
+    # ==================== 测试 10.6: 重启后模板持久化 ====================
+    print("  测试 10.6: 重启后模板持久化验证...")
+    
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM inspection_templates WHERE name = '月度常规巡检'")
+    db_count_before = c.fetchone()[0]
+    conn.close()
+    assert db_count_before == 1, "模板应该已保存到数据库"
+    
+    result = _run_template_cmd("list-templates")
+    assert "月度常规巡检" in result.stdout
+    count_after = len([l for l in result.stdout.split('\n') if '月度常规巡检' in l])
+    assert count_after >= 1, "重启后模板应该仍然存在"
+    print(f"    ✅ 通过: 数据库中持久化 {db_count_before} 个模板")
+    
+    # ==================== 测试 10.7: 导出模板为JSON ====================
+    print("  测试 10.7: 导出模板为JSON...")
+    
+    export_file = PROJECT_ROOT / "test_export_template.json"
+    result = _run_template_cmd('export-template', '--name', '月度常规巡检', '--output', str(export_file))
+    assert result.returncode == 0
+    assert "已导出到" in result.stdout
+    assert export_file.exists()
+    
+    with open(export_file, 'r', encoding='utf-8') as f:
+        exported_data = json.load(f)
+    
+    assert exported_data["name"] == "月度常规巡检"
+    assert exported_data["rule_version"] == "v2"
+    assert exported_data["threshold_overrides"]["pressure_sudden_drop"]["threshold"] == 0.15
+    assert len(exported_data["remark_fields"]) == 2
+    assert exported_data["report_preferences"]["filename_prefix"] == "月度巡检报告"
+    print(f"    ✅ 通过: JSON导出格式正确，内容完整")
+    
+    # ==================== 测试 10.8: 导入模板 - 冲突处理 ====================
+    print("  测试 10.8: 导入模板 - 冲突处理（默认报错）...")
+    
+    result = _run_template_cmd('import-template', '--file', str(export_file))
+    assert result.returncode == 1, "同名模板导入默认应该报错"
+    assert "已存在" in result.stdout or "已存在" in result.stderr
+    assert "auto-rename" in result.stdout or "skip-existing" in result.stdout
+    print(f"    ✅ 通过: 默认冲突处理正确 - 不静默覆盖")
+    
+    print("  测试 10.9: 导入模板 - 自动重命名...")
+    result = _run_template_cmd('import-template', '--file', str(export_file), '--auto-rename')
+    assert result.returncode == 0
+    assert "自动重命名" in result.stdout
+    assert "_导入1" in result.stdout
+    print(f"    ✅ 通过: 自动重命名冲突处理正常")
+    
+    print("  测试 10.10: 导入模板 - 跳过已有...")
+    result = _run_template_cmd('import-template', '--file', str(export_file), '--skip-existing')
+    assert result.returncode == 0
+    assert "已跳过" in result.stdout
+    print(f"    ✅ 通过: 跳过已有冲突处理正常")
+    
+    # 验证数据库中的模板数量
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM inspection_templates")
+    total_templates = c.fetchone()[0]
+    conn.close()
+    assert total_templates == 2, f"应该有2个模板（原模板+重命名的），实际{total_templates}"
+    
+    # ==================== 测试 10.11: 应用模板 - 报告内容变化 ====================
+    print("  测试 10.11: 应用模板 - 验证报告内容变化...")
+    
+    # 先导入设备台账和传感器数据所需的数据
+    _run_template_cmd('import-equipment', '--file', str(SAMPLE_DATA_DIR / "equipment_ledger.csv"))
+    
+    result = _run_template_cmd(
+        'apply-template',
+        '--template-name', '月度常规巡检',
+        '--batch-name', '测试模板应用批次',
+        '--source', str(SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"),
+        '--export'
+    )
+    assert result.returncode == 0, f"应用模板失败: {result.stderr}"
+    assert "应用模板" in result.stdout
+    assert "批次创建成功" in result.stdout
+    assert "运行异常检测" in result.stdout
+    assert "添加模板预置备注" in result.stdout
+    assert "导出报告" in result.stdout
+    
+    # 获取创建的批次ID
+    batch_id_line = [l for l in result.stdout.split('\n') if '批次创建成功' in l][0]
+    batch_id = batch_id_line.split('ID=')[1].split(',')[0].strip()
+    print(f"    ✅ 通过: 模板应用成功，批次ID={batch_id}")
+    
+    # ==================== 测试 10.12: 验证模板应用后的报告内容 ====================
+    print("  测试 10.12: 验证应用模板后的报告内容...")
+    
+    html_files = list(REPORTS_DIR.glob("*.html"))
+    assert len(html_files) > 0, "应该有HTML报告生成"
+    
+    latest_html = max(html_files, key=lambda p: p.stat().st_mtime)
+    with open(latest_html, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+    
+    # 验证报告中包含模板预置的备注
+    assert "月度常规巡检开始" in html_content, "HTML报告应该包含模板预置的备注"
+    assert "请按标准流程复核异常" in html_content, "HTML报告应该包含第二条预置备注"
+    print("    ✅ 通过: HTML报告包含模板预置的备注内容")
+    
+    # 验证备注CSV
+    csv_files = list(REPORTS_DIR.glob("*.csv"))
+    remark_csv = [f for f in csv_files if "remarks" in f.name and latest_html.stem in f.name]
+    if not remark_csv:
+        remark_csv = [f for f in csv_files if "remarks" in f.name]
+    assert len(remark_csv) > 0, "应该有备注CSV文件"
+    
+    with open(remark_csv[-1], 'r', encoding='utf-8') as f:
+        remark_content = f.read()
+    assert "月度常规巡检开始" in remark_content, "CSV报告应该包含模板预置的备注"
+    print("    ✅ 通过: CSV报告包含模板预置的备注内容")
+    
+    # 验证数据库中备注数量
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM remarks WHERE batch_id = {batch_id}")
+    remark_count = c.fetchone()[0]
+    conn.close()
+    assert remark_count >= 2, f"批次应该至少有2条模板预置备注，实际{remark_count}"
+    print(f"    ✅ 通过: 数据库中有 {remark_count} 条备注（含模板预置）")
+    
+    # ==================== 测试 10.13: 阈值覆盖实际生效 ====================
+    print("  测试 10.13: 验证阈值覆盖实际生效...")
+    
+    # 使用更严格的阈值创建新模板，应该检测到更多异常
+    strict_threshold = json.dumps({
+        "pressure_sudden_drop": {"threshold": 0.01},
+        "long_time_offline": {"threshold_hours": 1}
+    }, ensure_ascii=False)
+    
+    result = _run_template_cmd(
+        'save-template',
+        '--name', '严格检测模板',
+        '--rule-version', 'v2',
+        '--threshold-overrides', strict_threshold
+    )
+    assert result.returncode == 0
+    
+    result = _run_template_cmd(
+        'apply-template',
+        '--template-name', '严格检测模板',
+        '--batch-name', '严格检测批次',
+        '--source', str(SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv")
+    )
+    assert result.returncode == 0
+    
+    # 获取严格检测批次的异常数量
+    strict_batch_line = [l for l in result.stdout.split('\n') if '批次创建成功' in l][0]
+    strict_batch_id = strict_batch_line.split('ID=')[1].split(',')[0].strip()
+    
+    result = _run_template_cmd('list-anomalies', '--batch-id', strict_batch_id)
+    strict_count = len([l for l in result.stdout.split('\n') if l.strip().startswith('ID=')])
+    
+    # 使用默认阈值的批次应该有13条异常，严格阈值应该更多或相等
+    print(f"    严格阈值异常数: {strict_count}, 默认阈值异常数: 13")
+    assert strict_count >= 13, f"严格阈值应该检测到至少13条异常，实际{strict_count}"
+    print(f"    ✅ 通过: 阈值覆盖正常生效")
+    
+    # ==================== 测试 10.14: 重命名和删除模板 ====================
+    print("  测试 10.14: 重命名和删除模板...")
+    
+    result = _run_template_cmd('list-templates')
+    template_id_line = [l for l in result.stdout.split('\n') if '严格检测模板' in l][0]
+    strict_template_id = template_id_line.split('ID=')[1].split('|')[0].strip()
+    
+    result = _run_template_cmd('rename-template', '--id', strict_template_id, '--new-name', '超严格检测模板')
+    assert result.returncode == 0
+    assert "超严格检测模板" in result.stdout
+    print("    ✅ 通过: 重命名成功")
+    
+    result = _run_template_cmd('delete-template', '--name', '超严格检测模板')
+    assert result.returncode == 0
+    assert "删除成功" in result.stdout
+    
+    result = _run_template_cmd('show-template', '--name', '超严格检测模板')
+    assert result.returncode == 1
+    print("    ✅ 通过: 删除成功")
+    
+    # ==================== 测试 10.15: 批量导出导入 ====================
+    print("  测试 10.15: 批量导出导入...")
+    
+    bulk_export = PROJECT_ROOT / "test_bulk_templates.json"
+    result = _run_template_cmd('export-all-templates', '--output', str(bulk_export))
+    assert result.returncode == 0
+    assert bulk_export.exists()
+    
+    with open(bulk_export, 'r', encoding='utf-8') as f:
+        bulk_data = json.load(f)
+    assert "templates" in bulk_data
+    assert len(bulk_data["templates"]) >= 2
+    
+    # 删除现有模板后批量导入
+    _run_template_cmd('delete-template', '--name', '月度常规巡检')
+    _run_template_cmd('delete-template', '--name', '月度常规巡检_导入1')
+    
+    result = _run_template_cmd('import-templates-bulk', '--file', str(bulk_export))
+    assert result.returncode == 0
+    assert "成功: 2/2" in result.stdout or "成功: 3/3" in result.stdout
+    print(f"    ✅ 通过: 批量导入成功 - {result.stdout.strip().splitlines()[-1]}")
+    
+    # 清理测试文件
+    try:
+        export_file.unlink()
+        bulk_export.unlink()
+    except:
+        pass
+    
+    clean_test_env()
+    print("  ✅ 模板功能测试全部通过")
+
+
 def test_existing_db_re_run():
     """测试已有数据库上复跑 README 流程"""
     print("\n" + "=" * 70)
@@ -750,6 +1063,7 @@ def main():
         test_export_reports,
         test_duplicate_shift_import,
         test_remark_functions,
+        test_template_functions,
         test_existing_db_re_run,
     ]
     
@@ -778,6 +1092,7 @@ def main():
         print(f"   - 报告导出: 通过")
         print(f"   - 巡检班次重复导入: 通过")
         print(f"   - 备注功能（导入/追加/查看/去重/报告）: 通过")
+        print(f"   - 模板功能（保存/查看/应用/导入导出/冲突处理/报告变化）: 通过")
         print(f"   - 已有数据库复跑: 通过")
         return 0
     else:

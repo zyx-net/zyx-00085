@@ -11,6 +11,8 @@ from pump_inspection import (
     BatchManager,
     RuleManager,
     ReportExporter,
+    TemplateManager,
+    TemplateError,
 )
 
 
@@ -434,6 +436,349 @@ def cmd_list_remarks(args):
         db.close()
 
 
+def _parse_json_arg(arg_str: str, arg_name: str) -> dict:
+    """解析JSON格式的命令行参数"""
+    if not arg_str:
+        return None
+    try:
+        import json
+        return json.loads(arg_str)
+    except json.JSONDecodeError as e:
+        print(f"错误: {arg_name} 参数格式错误: {e}")
+        sys.exit(1)
+
+
+def cmd_save_template(args):
+    """保存巡检方案模板"""
+    import json
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+
+        threshold_overrides = _parse_json_arg(args.threshold_overrides, "--threshold-overrides")
+        remark_fields = _parse_json_arg(args.remark_fields, "--remark-fields")
+        report_preferences = _parse_json_arg(args.report_preferences, "--report-preferences")
+
+        try:
+            template = template_manager.create_template(
+                name=args.name,
+                rule_version=args.rule_version,
+                description=args.description or "",
+                threshold_overrides=threshold_overrides,
+                remark_fields=remark_fields,
+                report_preferences=report_preferences,
+                created_by=args.created_by or "system"
+            )
+            print(f"模板保存成功: ID={template.id}, 名称={template.name}")
+            print(f"  规则版本: {template.rule_version}")
+            if template.description:
+                print(f"  描述: {template.description}")
+        except TemplateError as e:
+            print(f"保存模板失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
+def cmd_list_templates(args):
+    """列出所有巡检方案模板"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        templates = template_manager.get_all_templates()
+        print(f"巡检方案模板列表 (共 {len(templates)} 个):")
+        for t in templates:
+            print(f"  ID={t.id} | 名称={t.name} | 规则版本={t.rule_version} | "
+                  f"创建时间={t.created_at} | 更新时间={t.updated_at}")
+            if t.description:
+                print(f"      描述: {t.description}")
+    finally:
+        db.close()
+
+
+def cmd_show_template(args):
+    """查看模板详情"""
+    import json
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        template = template_manager.get_template(
+            template_id=args.id,
+            name=args.name
+        )
+        if not template:
+            print("模板不存在")
+            sys.exit(1)
+
+        print(f"模板详情:")
+        print(f"  ID: {template.id}")
+        print(f"  名称: {template.name}")
+        print(f"  规则版本: {template.rule_version}")
+        print(f"  描述: {template.description or '(无)'}")
+        print(f"  创建人: {template.created_by}")
+        print(f"  创建时间: {template.created_at}")
+        print(f"  更新时间: {template.updated_at}")
+
+        if template.threshold_overrides:
+            print(f"\n  阈值覆盖:")
+            overrides = json.loads(template.threshold_overrides)
+            for rule, params in overrides.items():
+                print(f"    {rule}: {params}")
+
+        if template.remark_fields:
+            print(f"\n  备注字段:")
+            remarks = json.loads(template.remark_fields)
+            for i, r in enumerate(remarks, 1):
+                print(f"    {i}. 类型={r.get('remark_type', 'general')}, 操作人={r.get('operator', 'system')}")
+                print(f"       内容: {r.get('content', '')}")
+
+        if template.report_preferences:
+            print(f"\n  报告偏好:")
+            prefs = json.loads(template.report_preferences)
+            for k, v in prefs.items():
+                print(f"    {k}: {v}")
+    finally:
+        db.close()
+
+
+def cmd_apply_template(args):
+    """应用模板创建批次并运行分析"""
+    import json
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        batch_manager = BatchManager(db)
+        rule_manager = RuleManager(db)
+
+        try:
+            config = template_manager.apply_template(
+                template_id=args.id,
+                name=args.template_name
+            )
+        except TemplateError as e:
+            print(f"应用模板失败: {e}")
+            sys.exit(1)
+
+        print(f"应用模板: {config['template_name']} (ID={config['template_id']})")
+        print(f"  规则版本: {config['rule_version']}")
+
+        rule_config = rule_manager.get_rule_config(config['rule_version'])
+        if not rule_config:
+            print(f"错误: 规则版本 {config['rule_version']} 不存在")
+            sys.exit(1)
+
+        if config['threshold_overrides']:
+            print(f"  应用阈值覆盖: {len(config['threshold_overrides'])} 条规则")
+            for rule_name, overrides in config['threshold_overrides'].items():
+                if rule_name in rule_config.get('rules', {}):
+                    rule_config['rules'][rule_name].update(overrides)
+                    print(f"    - {rule_name}: {overrides}")
+
+        batch_name = args.batch_name or f"{config['template_name']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        batch_notes = f"基于模板 '{config['template_name']}' 创建"
+        if config['description']:
+            batch_notes += f"\n模板描述: {config['description']}"
+
+        batch = batch_manager.create_batch(
+            batch_name=batch_name,
+            rule_version=config['rule_version'],
+            source_file=args.source or "",
+            notes=batch_notes
+        )
+        print(f"\n批次创建成功: ID={batch.id}, 名称={batch.batch_name}")
+
+        if args.source:
+            print(f"\n导入传感器数据: {args.source}")
+            success, unmapped, errors = batch_manager.import_sensor_readings(
+                batch.id, args.source, args.skip_validation
+            )
+            if not success:
+                print(f"导入失败: {errors}")
+                sys.exit(1)
+            batch = batch_manager.get_batch(batch.id)
+            print(f"成功导入 {batch.total_records} 条记录")
+
+        print(f"\n运行异常检测...")
+        count, anomalies = batch_manager.run_detection(batch.id, rule_config)
+        print(f"检测完成，共发现 {count} 条异常")
+
+        if config['remark_fields']:
+            print(f"\n添加模板预置备注: {len(config['remark_fields'])} 条")
+            for remark_data in config['remark_fields']:
+                try:
+                    success, remark, errs = batch_manager.add_remark(
+                        batch_id=batch.id,
+                        content=remark_data['content'],
+                        anomaly_id=remark_data.get('anomaly_id'),
+                        operator=remark_data.get('operator', 'system'),
+                        remark_type=remark_data.get('remark_type', 'general')
+                    )
+                    if success:
+                        print(f"  + 备注已添加: {remark_data['content'][:30]}...")
+                except Exception as e:
+                    print(f"  - 添加备注失败: {e}")
+
+        if args.export:
+            print(f"\n导出报告...")
+            exporter = ReportExporter(db)
+            prefs = config.get('report_preferences', {})
+            include_raw = prefs.get('include_raw_data', True)
+
+            filename_prefix = prefs.get('filename_prefix')
+            if filename_prefix:
+                safe_name = "".join(c for c in filename_prefix if c.isalnum() or c in ("-", "_"))
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                html_filename = f"{safe_name}_{timestamp}.html"
+                csv_filename = f"{safe_name}_{timestamp}"
+            else:
+                html_filename = None
+                csv_filename = None
+
+            html_file = exporter.export_html(
+                batch.id,
+                include_raw_data=include_raw,
+                filename=html_filename
+            )
+            print(f"  HTML报告: {html_file}")
+
+            csv_files = exporter.export_csv(
+                batch.id,
+                include_raw_data=include_raw,
+                filename=csv_filename
+            )
+            for name, path in csv_files.items():
+                print(f"  CSV_{name}: {path}")
+
+        print(f"\n模板应用完成! 批次ID={batch.id}")
+    finally:
+        db.close()
+
+
+def cmd_rename_template(args):
+    """重命名模板"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        try:
+            template = template_manager.rename_template(args.id, args.new_name)
+            print(f"模板重命名成功: ID={template.id}, 新名称={template.name}")
+        except TemplateError as e:
+            print(f"重命名失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
+def cmd_delete_template(args):
+    """删除模板"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        try:
+            template_manager.delete_template(
+                template_id=args.id,
+                name=args.name
+            )
+            print("模板删除成功")
+        except TemplateError as e:
+            print(f"删除失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
+def cmd_export_template(args):
+    """导出模板为JSON"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        try:
+            data, filepath = template_manager.export_template_to_json(
+                template_id=args.id,
+                name=args.name,
+                output_file=args.output
+            )
+            if filepath:
+                print(f"模板已导出到: {filepath}")
+            else:
+                import json
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+        except TemplateError as e:
+            print(f"导出失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
+def cmd_import_template(args):
+    """从JSON导入模板"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+
+        on_conflict = "error"
+        if args.auto_rename:
+            on_conflict = "rename"
+        elif args.skip_existing:
+            on_conflict = "skip"
+
+        try:
+            template, status = template_manager.import_template_from_json(
+                args.file,
+                on_conflict=on_conflict
+            )
+            print(f"{status}: ID={template.id}, 名称={template.name}")
+        except TemplateError as e:
+            print(f"导入失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
+def cmd_export_all_templates(args):
+    """导出所有模板为一个JSON文件"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+        filepath = template_manager.export_all_templates(args.output)
+        print(f"所有模板已导出到: {filepath}")
+    finally:
+        db.close()
+
+
+def cmd_import_templates_bulk(args):
+    """从JSON批量导入多个模板"""
+    db = SessionLocal()
+    try:
+        template_manager = TemplateManager(db)
+
+        on_conflict = "error"
+        if args.auto_rename:
+            on_conflict = "rename"
+        elif args.skip_existing:
+            on_conflict = "skip"
+
+        try:
+            results = template_manager.import_templates_from_bulk_json(
+                args.file,
+                on_conflict=on_conflict
+            )
+            print(f"批量导入完成 (共 {len(results)} 个模板):")
+            success_count = 0
+            for i, (template, status) in enumerate(results, 1):
+                if template:
+                    success_count += 1
+                    print(f"  {i}. {status}: ID={template.id}, 名称={template.name}")
+                else:
+                    print(f"  {i}. {status}")
+            print(f"\n成功: {success_count}/{len(results)}")
+        except TemplateError as e:
+            print(f"批量导入失败: {e}")
+            sys.exit(1)
+    finally:
+        db.close()
+
+
 def cmd_run_full_flow(args):
     """运行完整演示流程"""
     print_separator("泵房巡检异常分析工具 - 完整演示流程")
@@ -667,6 +1012,47 @@ def main():
   # 导出CSV报告
   python main.py export-csv --batch-id 1
 
+  # ========== 巡检方案模板 ==========
+  # 保存模板（含阈值覆盖、备注、报告偏好）
+  python main.py save-template --name "月度常规巡检" --rule-version v2 ^
+    --description "月度常规泵房巡检方案" ^
+    --threshold-overrides "{\"pressure_sudden_drop\": {\"threshold\": 0.15}}" ^
+    --remark-fields "[{\"content\": \"月度常规巡检开始\", \"remark_type\": \"general\", \"operator\": \"系统\"}]" ^
+    --report-preferences "{\"include_raw_data\": true, \"filename_prefix\": \"月度报告\"}"
+
+  # 列出所有模板
+  python main.py list-templates
+
+  # 查看模板详情
+  python main.py show-template --name "月度常规巡检"
+
+  # 应用模板（自动创建批次、导入数据、检测、加备注、导出报告）
+  python main.py apply-template --name "月度常规巡检" ^
+    --batch-name "2026年6月巡检" ^
+    --source sample_data/sensor_readings_with_anomalies.csv ^
+    --export
+
+  # 重命名模板
+  python main.py rename-template --id 1 --new-name "季度专项巡检"
+
+  # 删除模板
+  python main.py delete-template --name "月度常规巡检"
+
+  # 导出模板为JSON
+  python main.py export-template --name "月度常规巡检" --output template_monthly.json
+
+  # 从JSON导入模板（同名冲突时自动重命名）
+  python main.py import-template --file template_monthly.json --auto-rename
+
+  # 从JSON导入模板（同名冲突时跳过）
+  python main.py import-template --file template_monthly.json --skip-existing
+
+  # 批量导出所有模板
+  python main.py export-all-templates --output all_templates.json
+
+  # 批量导入模板
+  python main.py import-templates-bulk --file all_templates.json --auto-rename
+
   # 运行完整演示流程
   python main.py run-full-flow
         """
@@ -791,6 +1177,77 @@ def main():
     p = subparsers.add_parser("run-full-flow", help="运行完整演示流程")
     p.add_argument("--batch-name", help="批次名称")
     p.set_defaults(func=cmd_run_full_flow)
+
+    # save-template
+    p = subparsers.add_parser("save-template", help="保存巡检方案模板")
+    p.add_argument("--name", required=True, help="模板名称（唯一）")
+    p.add_argument("--rule-version", required=True, help="规则版本号，如 v1, v2")
+    p.add_argument("--description", help="模板描述")
+    p.add_argument("--threshold-overrides", help='阈值覆盖，JSON格式，如 {"pressure_sudden_drop": {"threshold": 0.15}}')
+    p.add_argument("--remark-fields", help='预置备注，JSON数组格式，如 [{"content": "...", "remark_type": "general"}]')
+    p.add_argument("--report-preferences", help='报告偏好，JSON格式，如 {"include_raw_data": true}')
+    p.add_argument("--created-by", help="创建人，默认 system")
+    p.set_defaults(func=cmd_save_template)
+
+    # list-templates
+    p = subparsers.add_parser("list-templates", help="列出所有巡检方案模板")
+    p.set_defaults(func=cmd_list_templates)
+
+    # show-template
+    p = subparsers.add_parser("show-template", help="查看模板详情")
+    p.add_argument("--id", type=int, help="模板ID")
+    p.add_argument("--name", help="模板名称")
+    p.set_defaults(func=cmd_show_template)
+
+    # apply-template
+    p = subparsers.add_parser("apply-template", help="应用模板创建批次并运行分析")
+    p.add_argument("--id", type=int, help="模板ID")
+    p.add_argument("--template-name", help="模板名称（与--id二选一）")
+    p.add_argument("--batch-name", help="批次名称，默认为模板名+时间戳")
+    p.add_argument("--source", help="传感器数据文件路径")
+    p.add_argument("--skip-validation", action="store_true", help="跳过数据校验")
+    p.add_argument("--export", action="store_true", help="分析完成后自动导出报告")
+    p.set_defaults(func=cmd_apply_template)
+
+    # rename-template
+    p = subparsers.add_parser("rename-template", help="重命名模板")
+    p.add_argument("--id", type=int, required=True, help="模板ID")
+    p.add_argument("--new-name", required=True, help="新的模板名称")
+    p.set_defaults(func=cmd_rename_template)
+
+    # delete-template
+    p = subparsers.add_parser("delete-template", help="删除模板")
+    p.add_argument("--id", type=int, help="模板ID")
+    p.add_argument("--name", help="模板名称（与--id二选一）")
+    p.set_defaults(func=cmd_delete_template)
+
+    # export-template
+    p = subparsers.add_parser("export-template", help="导出模板为JSON")
+    p.add_argument("--id", type=int, help="模板ID")
+    p.add_argument("--name", help="模板名称（与--id二选一）")
+    p.add_argument("--output", help="输出文件路径，不指定则打印到控制台")
+    p.set_defaults(func=cmd_export_template)
+
+    # import-template
+    p = subparsers.add_parser("import-template", help="从JSON导入模板")
+    p.add_argument("--file", required=True, help="JSON文件路径")
+    conflict_group = p.add_mutually_exclusive_group()
+    conflict_group.add_argument("--auto-rename", action="store_true", help="同名冲突时自动重命名（加_导入N后缀）")
+    conflict_group.add_argument("--skip-existing", action="store_true", help="同名冲突时跳过")
+    p.set_defaults(func=cmd_import_template)
+
+    # export-all-templates
+    p = subparsers.add_parser("export-all-templates", help="导出所有模板为一个JSON文件")
+    p.add_argument("--output", required=True, help="输出文件路径")
+    p.set_defaults(func=cmd_export_all_templates)
+
+    # import-templates-bulk
+    p = subparsers.add_parser("import-templates-bulk", help="从JSON批量导入多个模板")
+    p.add_argument("--file", required=True, help="包含templates数组的JSON文件路径")
+    conflict_group = p.add_mutually_exclusive_group()
+    conflict_group.add_argument("--auto-rename", action="store_true", help="同名冲突时自动重命名")
+    conflict_group.add_argument("--skip-existing", action="store_true", help="同名冲突时跳过")
+    p.set_defaults(func=cmd_import_templates_bulk)
 
     args = parser.parse_args()
 

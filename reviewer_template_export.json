@@ -1,0 +1,32 @@
+{
+  "name": "reviewer_template_a01",
+  "description": "reviewer_template_for_solo_review",
+  "rule_version": "v2",
+  "threshold_overrides": {
+    "pressure_sudden_drop": {
+      "threshold": 0.15,
+      "time_window_minutes": 30
+    },
+    "long_time_offline": {
+      "threshold_hours": 3
+    }
+  },
+  "remark_fields": [
+    {
+      "content": "reviewer-start-note",
+      "remark_type": "general",
+      "operator": "reviewer"
+    },
+    {
+      "content": "reviewer-followup-note",
+      "remark_type": "maintenance",
+      "operator": "reviewer"
+    }
+  ],
+  "report_preferences": {
+    "include_raw_data": true,
+    "filename_prefix": "reviewer_report"
+  },
+  "created_by": "reviewer",
+  "exported_at": "2026-06-08T22:03:17.802279"
+}
