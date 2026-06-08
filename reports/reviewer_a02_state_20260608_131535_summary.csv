@@ -1,0 +1,2 @@
+﻿批次ID,批次名称,规则版本,导入时间,状态,导入记录数,异常总数,已复核数,待复核数,数据源,备注
+4,reviewer-a02-main-20260608_131343,v2,2026-06-08 13:13:47.098264,detected,31,13,0,13,sample_data/sensor_readings_with_anomalies.csv,

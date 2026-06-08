@@ -2,6 +2,7 @@
 import argparse
 import sys
 import os
+import io
 from datetime import datetime
 
 from pump_inspection import (
@@ -11,6 +12,42 @@ from pump_inspection import (
     RuleManager,
     ReportExporter,
 )
+
+
+class UnicodeSafeStreamWrapper(io.TextIOWrapper):
+    def __init__(self, buffer, encoding='utf-8', errors='replace'):
+        super().__init__(buffer, encoding=encoding, errors=errors,
+                         line_buffering=True, write_through=True)
+
+    def write(self, s):
+        try:
+            return super().write(s)
+        except UnicodeEncodeError:
+            safe_s = s.encode(self.encoding, errors='replace').decode(self.encoding)
+            return super().write(safe_s)
+
+
+def _setup_unicode_safe_output():
+    if sys.platform != "win32":
+        return
+
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        return
+    except (AttributeError, io.UnsupportedOperation):
+        pass
+
+    try:
+        stdout_bin = sys.stdout.buffer if hasattr(sys.stdout, 'buffer') else sys.stdout
+        stderr_bin = sys.stderr.buffer if hasattr(sys.stderr, 'buffer') else sys.stderr
+        sys.stdout = UnicodeSafeStreamWrapper(stdout_bin, encoding='utf-8')
+        sys.stderr = UnicodeSafeStreamWrapper(stderr_bin, encoding='utf-8')
+    except Exception:
+        os.environ.setdefault('PYTHONIOENCODING', 'utf-8:replace')
+
+
+_setup_unicode_safe_output()
 
 SAMPLE_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample_data")
 

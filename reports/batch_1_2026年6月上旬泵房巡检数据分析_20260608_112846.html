@@ -49,7 +49,7 @@
             <div class="info-item"><span class="label">批次名称:</span> 2026年6月上旬泵房巡检数据分析</div>
             <div class="info-item"><span class="label">批次ID:</span> 1</div>
             <div class="info-item"><span class="label">规则版本:</span> v2</div>
-            <div class="info-item"><span class="label">导入时间:</span> 2026-06-08 10:26:52.852422</div>
+            <div class="info-item"><span class="label">导入时间:</span> 2026-06-08 11:28:46.743686</div>
             <div class="info-item"><span class="label">状态:</span> detected</div>
             <div class="info-item"><span class="label">数据源:</span> sample_data/sensor_readings_with_anomalies.csv</div>
         </div>
@@ -63,12 +63,12 @@
             </div>
             <div class="summary-card warning">
                 <h3>异常总数</h3>
-                <div class="value">12</div>
+                <div class="value">13</div>
                 <div class="label">条异常记录</div>
             </div>
             <div class="summary-card success">
                 <h3>已复核</h3>
-                <div class="value">0</div>
+                <div class="value">1</div>
                 <div class="label">条已处理</div>
             </div>
             <div class="summary-card danger">
@@ -115,6 +115,14 @@
             </div>
             
             <div class="anomaly-type-card">
+                <h4>读数倒退 (READING_BACKWARD)</h4>
+                <div class="stats"><span>总数:</span><strong>1</strong></div>
+                <div class="stats"><span>已复核:</span><strong>0</strong></div>
+                <div class="stats"><span>确认异常:</span><strong class="severity-high">0</strong></div>
+                <div class="stats"><span>误报:</span><strong class="severity-low">0</strong></div>
+            </div>
+            
+            <div class="anomaly-type-card">
                 <h4>长时间离线 (LONG_TIME_OFFLINE)</h4>
                 <div class="stats"><span>总数:</span><strong>2</strong></div>
                 <div class="stats"><span>已复核:</span><strong>0</strong></div>
@@ -149,8 +157,8 @@
             <tbody>
                 
                 <tr>
-                    <td>2026-06-08 10:26:53.032259</td>
-                    <td>#11</td>
+                    <td>2026-06-08 11:28:46.920642</td>
+                    <td>#12</td>
                     <td>复核</td>
                     <td>confirmed</td>
                     <td>李四</td>
@@ -158,8 +166,8 @@
                 </tr>
                 
                 <tr>
-                    <td>2026-06-08 10:26:53.023035</td>
-                    <td>#12</td>
+                    <td>2026-06-08 11:28:46.911555</td>
+                    <td>#13</td>
                     <td>回滚</td>
                     <td>rollback:false_positive</td>
                     <td>system</td>
@@ -167,8 +175,8 @@
                 </tr>
                 
                 <tr>
-                    <td>2026-06-08 10:26:53.011642</td>
-                    <td>#12</td>
+                    <td>2026-06-08 11:28:46.896109</td>
+                    <td>#13</td>
                     <td>复核</td>
                     <td>false_positive</td>
                     <td>张三</td>
@@ -317,6 +325,21 @@
                 
                 <tr>
                     <td>#9</td>
+                    <td>读数倒退<br><small>READING_BACKWARD</small></td>
+                    <td><span class="severity-medium">medium</span></td>
+                    <td>PUMP-002</td>
+                    <td>2026-06-01 09:15:00</td>
+                    <td>设备 PUMP-002 流量读数出现倒退: 155.5 -> 130.0 (下降 25.5m³/h)</td>
+                    <td>
+                        
+                        <span class="status-pending">待复核</span>
+                        
+                    </td>
+                    <td>行15</td>
+                </tr>
+                
+                <tr>
+                    <td>#10</td>
                     <td>长时间离线<br><small>LONG_TIME_OFFLINE</small></td>
                     <td><span class="severity-medium">medium</span></td>
                     <td>PUMP-001</td>
@@ -331,7 +354,7 @@
                 </tr>
                 
                 <tr>
-                    <td>#10</td>
+                    <td>#11</td>
                     <td>长时间离线<br><small>LONG_TIME_OFFLINE</small></td>
                     <td><span class="severity-medium">medium</span></td>
                     <td>PUMP-003</td>
@@ -346,7 +369,7 @@
                 </tr>
                 
                 <tr>
-                    <td>#11</td>
+                    <td>#12</td>
                     <td>水压超限<br><small>PRESSURE_OUT_OF_RANGE</small></td>
                     <td><span class="severity-high">high</span></td>
                     <td>PUMP-004</td>
@@ -361,7 +384,7 @@
                 </tr>
                 
                 <tr>
-                    <td>#12</td>
+                    <td>#13</td>
                     <td>水压超限<br><small>PRESSURE_OUT_OF_RANGE</small></td>
                     <td><span class="severity-high">high</span></td>
                     <td>PUMP-006</td>
@@ -543,10 +566,10 @@
                     <td>PUMP-002</td>
                     <td>2026-06-01 09:15:00</td>
                     <td>0.56</td>
-                    <td>145.0</td>
+                    <td>130.0</td>
                     <td>27.0</td>
                     <td>张三</td>
-                    <td><div class="raw-data">{"device_id": "PUMP-002", "reading_time": "2026-06-01 09:15:00", "water_pressure": 0.56, "flow_rate": 145.0, "temperature": 27.0, "status": "正常", "inspector": "张三"}</div></td>
+                    <td><div class="raw-data">{"device_id": "PUMP-002", "reading_time": "2026-06-01 09:15:00", "water_pressure": 0.56, "flow_rate": 130.0, "temperature": 27.0, "status": "正常", "inspector": "张三"}</div></td>
                 </tr>
                 
                 <tr>
@@ -741,7 +764,7 @@
         
 
         <div class="footer">
-            报告生成时间: 2026-06-08 10:26:53 | 泵房巡检异常分析工具 v1.0
+            报告生成时间: 2026-06-08 11:28:46 | 泵房巡检异常分析工具 v1.0
         </div>
     </div>
 </body>
