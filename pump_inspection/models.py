@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
@@ -47,8 +47,8 @@ class InspectionShift(Base):
     __tablename__ = "inspection_shifts"
 
     id = Column(Integer, primary_key=True, index=True)
-    batch_id = Column(Integer, ForeignKey("batches.id"))
-    shift_id = Column(String(100), nullable=False, unique=True)
+    batch_id = Column(Integer, ForeignKey("batches.id"), nullable=False)
+    shift_id = Column(String(100), nullable=False)
     shift_date = Column(DateTime, nullable=False)
     shift_type = Column(String(50))
     inspector = Column(String(100))
@@ -56,6 +56,10 @@ class InspectionShift(Base):
     end_time = Column(DateTime)
     equipment_checked = Column(String(500))
     raw_data = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint('batch_id', 'shift_id', name='uix_batch_shift'),
+    )
 
 
 class EquipmentLedger(Base):

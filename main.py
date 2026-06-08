@@ -161,7 +161,7 @@ def cmd_import_shifts(args):
         batch_manager = BatchManager(db)
         file_path = args.file or os.path.join(SAMPLE_DATA_DIR, "inspection_shifts.csv")
         print(f"导入巡检班次: {file_path}")
-        success, count, errors = batch_manager.import_inspection_shifts(args.batch_id, file_path)
+        success, stats, errors = batch_manager.import_inspection_shifts(args.batch_id, file_path)
 
         if not success:
             print(f"导入失败，错误信息:")
@@ -169,7 +169,11 @@ def cmd_import_shifts(args):
                 print(f"  - {err}")
             sys.exit(1)
 
-        print(f"成功导入 {count} 条巡检班次记录")
+        total = stats.get("total", 0)
+        inserted = stats.get("inserted", 0)
+        updated = stats.get("updated", 0)
+        skipped = stats.get("skipped", 0)
+        print(f"巡检班次导入完成: 总计 {total} 条 (新增 {inserted}, 更新 {updated}, 跳过 {skipped})")
     finally:
         db.close()
 
@@ -405,8 +409,11 @@ def cmd_run_full_flow(args):
         # Step 6: 导入巡检班次
         print_separator("Step 6: 导入巡检班次")
         shifts_file = os.path.join(SAMPLE_DATA_DIR, "inspection_shifts.csv")
-        success, count, errors = batch_manager.import_inspection_shifts(batch.id, shifts_file)
-        print(f"成功导入 {count} 条巡检班次记录")
+        success, stats, errors = batch_manager.import_inspection_shifts(batch.id, shifts_file)
+        total = stats.get("total", 0)
+        inserted = stats.get("inserted", 0)
+        updated = stats.get("updated", 0)
+        print(f"巡检班次导入完成: 总计 {total} 条 (新增 {inserted}, 更新 {updated})")
 
         # Step 7: 异常检测
         print_separator("Step 7: 运行异常检测")

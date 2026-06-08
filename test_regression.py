@@ -485,6 +485,122 @@ def test_export_reports():
     print("  ✅ 报告导出测试全部通过")
 
 
+def test_duplicate_shift_import():
+    """测试巡检班次重复导入场景"""
+    print("\n" + "=" * 70)
+    print("测试 7: 巡检班次重复导入")
+    print("=" * 70)
+    
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "批次1"')
+    
+    print("  测试 7.1: 全新库首次导入班次...")
+    result = run_cmd(f'import-shifts --batch-id 1 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 5" in result.stdout and "更新 0" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    print("  测试 7.2: 同一批次重复导入班次（upsert）...")
+    result = run_cmd(f'import-shifts --batch-id 1 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 0" in result.stdout and "更新 5" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    print("  测试 7.3: 创建新批次，导入相同班次文件...")
+    run_cmd('create-batch --name "批次2"')
+    result = run_cmd(f'import-shifts --batch-id 2 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 5" in result.stdout and "更新 0" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    print("  测试 7.4: 验证两个批次都有各自的班次记录...")
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT batch_id, COUNT(*) FROM inspection_shifts GROUP BY batch_id ORDER BY batch_id")
+    rows = c.fetchall()
+    conn.close()
+    
+    assert len(rows) == 2, f"应该有2个批次的班次记录，实际 {len(rows)} 个"
+    assert rows[0] == (1, 5), f"批次1应该有5条记录，实际 {rows[0][1]} 条"
+    assert rows[1] == (2, 5), f"批次2应该有5条记录，实际 {rows[1][1]} 条"
+    print(f"    ✅ 通过: 批次1={rows[0][1]}条, 批次2={rows[1][1]}条")
+    
+    print("  测试 7.5: 新批次3再次导入，验证不影响已有批次...")
+    run_cmd('create-batch --name "批次3"')
+    result = run_cmd(f'import-shifts --batch-id 3 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 5" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    clean_test_env()
+    print("  ✅ 巡检班次重复导入测试全部通过")
+
+
+def test_existing_db_re_run():
+    """测试已有数据库上复跑 README 流程"""
+    print("\n" + "=" * 70)
+    print("测试 8: 已有数据库复跑 README 流程")
+    print("=" * 70)
+    
+    print("  测试 8.1: 第一轮 - 创建批次1并导入数据...")
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "第一轮批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    result = run_cmd(f'import-shifts --batch-id 1 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 5" in result.stdout
+    
+    result = run_cmd("detect --batch-id 1")
+    assert f"共发现 {EXPECTED_ANOMALY_COUNT} 条异常" in result.stdout
+    print(f"    ✅ 通过: 第一轮检测到 {EXPECTED_ANOMALY_COUNT} 条异常")
+    
+    print("  测试 8.2: 第二轮 - 不删库创建批次2并导入相同数据...")
+    run_cmd('create-batch --name "第二轮批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 2 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    
+    result = run_cmd(f'import-shifts --batch-id 2 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0, f"第二轮导入班次失败: {result.stderr}"
+    assert "新增 5" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    print("  测试 8.3: 第二轮运行异常检测...")
+    result = run_cmd("detect --batch-id 2")
+    assert result.returncode == 0, f"第二轮检测失败: {result.stderr}"
+    assert f"共发现 {EXPECTED_ANOMALY_COUNT} 条异常" in result.stdout
+    print(f"    ✅ 通过: 第二轮检测到 {EXPECTED_ANOMALY_COUNT} 条异常")
+    
+    print("  测试 8.4: 验证两个批次数据独立...")
+    result = run_cmd("list-batches")
+    assert result.returncode == 0
+    assert "ID=1" in result.stdout
+    assert "ID=2" in result.stdout
+    
+    anomaly_counts = re.findall(r'异常=(\d+)', result.stdout)
+    assert len(anomaly_counts) >= 2, f"应该有至少2个批次，实际 {len(anomaly_counts)} 个"
+    assert anomaly_counts[0] == str(EXPECTED_ANOMALY_COUNT), f"批次1异常数不对: {anomaly_counts[0]}"
+    assert anomaly_counts[1] == str(EXPECTED_ANOMALY_COUNT), f"批次2异常数不对: {anomaly_counts[1]}"
+    print(f"    ✅ 通过: 两个批次各有 {EXPECTED_ANOMALY_COUNT} 条异常，互不影响")
+    
+    print("  测试 8.5: 第三轮 - 同一批次2重复导入班次（upsert）...")
+    result = run_cmd(f'import-shifts --batch-id 2 --file {SAMPLE_DATA_DIR / "inspection_shifts.csv"}')
+    assert result.returncode == 0
+    assert "新增 0" in result.stdout and "更新 5" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+    
+    print("  测试 8.6: 第三轮 - 再次检测不崩溃...")
+    result = run_cmd("detect --batch-id 2")
+    assert result.returncode == 0
+    print(f"    ✅ 通过: 重复检测不崩溃")
+    
+    clean_test_env()
+    print("  ✅ 已有数据库复跑测试全部通过")
+
+
 def main():
     """主测试函数"""
     print("\n" + "#" * 70)
@@ -505,6 +621,8 @@ def main():
         test_review_and_rollback,
         test_invalid_input,
         test_export_reports,
+        test_duplicate_shift_import,
+        test_existing_db_re_run,
     ]
     
     failed_tests = []
@@ -530,6 +648,8 @@ def main():
         print(f"   - 复核和回滚: 通过")
         print(f"   - 非法输入: 通过")
         print(f"   - 报告导出: 通过")
+        print(f"   - 巡检班次重复导入: 通过")
+        print(f"   - 已有数据库复跑: 通过")
         return 0
     else:
         print(f"\n❌ {len(failed_tests)}/{len(tests)} 个测试失败:")

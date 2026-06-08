@@ -121,36 +121,53 @@ class BatchManager:
         self.db.commit()
         return True, count, []
 
-    def import_inspection_shifts(self, batch_id: int, file_path: str) -> Tuple[bool, int, List[Dict]]:
+    def import_inspection_shifts(self, batch_id: int, file_path: str) -> Tuple[bool, Dict, List[Dict]]:
         df = self._read_file(file_path)
         if df is None:
-            return False, 0, [{"error": "无法读取文件"}]
+            return False, {"total": 0, "inserted": 0, "updated": 0, "skipped": 0}, [{"error": "无法读取文件"}]
 
         df, _ = self.field_mapper.map_columns(df, "inspection_shifts")
 
         is_valid, errors = self.validator.validate(df, "inspection_shifts")
         if not is_valid:
             error_dicts = [e.to_dict() for e in errors]
-            return False, 0, error_dicts
+            return False, {"total": 0, "inserted": 0, "updated": 0, "skipped": 0}, error_dicts
 
-        count = 0
+        stats = {"total": 0, "inserted": 0, "updated": 0, "skipped": 0}
         for idx, row in df.iterrows():
-            shift = InspectionShift(
-                batch_id=batch_id,
-                shift_id=str(row.get("shift_id", "")),
-                shift_date=pd.to_datetime(row.get("shift_date")) if pd.notna(row.get("shift_date")) else None,
-                shift_type=row.get("shift_type"),
-                inspector=row.get("inspector"),
-                start_time=pd.to_datetime(row.get("start_time")) if pd.notna(row.get("start_time")) else None,
-                end_time=pd.to_datetime(row.get("end_time")) if pd.notna(row.get("end_time")) else None,
-                equipment_checked=row.get("equipment_checked"),
-                raw_data=json.dumps(row.to_dict(), ensure_ascii=False)
-            )
-            self.db.add(shift)
-            count += 1
+            shift_id = str(row.get("shift_id", ""))
+            existing = self.db.query(InspectionShift).filter(
+                InspectionShift.batch_id == batch_id,
+                InspectionShift.shift_id == shift_id
+            ).first()
+
+            if existing:
+                existing.shift_date = pd.to_datetime(row.get("shift_date")) if pd.notna(row.get("shift_date")) else existing.shift_date
+                existing.shift_type = row.get("shift_type", existing.shift_type)
+                existing.inspector = row.get("inspector", existing.inspector)
+                existing.start_time = pd.to_datetime(row.get("start_time")) if pd.notna(row.get("start_time")) else existing.start_time
+                existing.end_time = pd.to_datetime(row.get("end_time")) if pd.notna(row.get("end_time")) else existing.end_time
+                existing.equipment_checked = row.get("equipment_checked", existing.equipment_checked)
+                existing.raw_data = json.dumps(row.to_dict(), ensure_ascii=False)
+                stats["updated"] += 1
+            else:
+                shift = InspectionShift(
+                    batch_id=batch_id,
+                    shift_id=shift_id,
+                    shift_date=pd.to_datetime(row.get("shift_date")) if pd.notna(row.get("shift_date")) else None,
+                    shift_type=row.get("shift_type"),
+                    inspector=row.get("inspector"),
+                    start_time=pd.to_datetime(row.get("start_time")) if pd.notna(row.get("start_time")) else None,
+                    end_time=pd.to_datetime(row.get("end_time")) if pd.notna(row.get("end_time")) else None,
+                    equipment_checked=row.get("equipment_checked"),
+                    raw_data=json.dumps(row.to_dict(), ensure_ascii=False)
+                )
+                self.db.add(shift)
+                stats["inserted"] += 1
+            stats["total"] += 1
 
         self.db.commit()
-        return True, count, []
+        return True, stats, []
 
     def run_detection(self, batch_id: int, rule_config: Dict) -> Tuple[int, List[Anomaly]]:
         batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
