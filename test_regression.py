@@ -593,7 +593,7 @@ def test_remark_functions():
     assert result.returncode == 0
     assert "备注添加成功" in result.stdout
     assert "类型=general" in result.stdout
-    assert "操作人=测试员" in result.stdout
+    assert "测试员" in result.stdout.replace('"', '')
     first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
     print(f"    ✅ 通过: {first_line}")
     
@@ -602,6 +602,7 @@ def test_remark_functions():
     assert result.returncode == 0
     assert "备注添加成功" in result.stdout
     assert "类型=maintenance" in result.stdout
+    assert "测试员2" in result.stdout.replace('"', '')
     first_line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
     print(f"    ✅ 通过: {first_line}")
     

@@ -99,7 +99,7 @@ python main.py run-full-flow
 
 ### 3. 预期异常数量
 
-使用样例数据 `sensor_readings_with_anomalies.csv` 时，预期检测到以下异常（使用 v2 规则）：
+使用样例数据 `sensor_readings_with_anomalies.csv` 时，预期检测到以下 **13 条** 异常（系统默认使用最新版本规则，当前为 v2）：
 
 | 异常类型 | 数量 | 说明 |
 |---------|------|------|
@@ -282,6 +282,6 @@ python main.py detect --batch-id 3
 
 - 数据模型: [models.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/models.py)
 - 异常检测引擎: [anomaly_detector.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/anomaly_detector.py#L15-L41)
-- 批次管理: [batch_manager.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/batch_manager.py)
-- 报告导出: [report_exporter.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/report_exporter.py)
-- 主流程入口: [main.py](file:///d:/workSpace/AI__SPACE/zyx-00085/main.py)
+- 批次管理 (含备注功能): [batch_manager.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/batch_manager.py#L341-L477)
+- 报告导出 (含备注): [report_exporter.py](file:///d:/workSpace/AI__SPACE/zyx-00085/pump_inspection/report_exporter.py)
+- 主流程入口 (含备注 CLI): [main.py](file:///d:/workSpace/AI__SPACE/zyx-00085/main.py)

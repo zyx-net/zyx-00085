@@ -19,23 +19,32 @@ class RuleManager:
 
     def _init_versions_from_files(self):
         existing_versions = {rv.version for rv in self.db.query(RuleVersion).all()}
+        has_active = any(rv.is_active for rv in self.db.query(RuleVersion).all())
 
+        version_files = []
         for filename in os.listdir(self.config_dir):
             if filename.startswith("detection_rules_v") and filename.endswith(".json"):
                 version = filename.replace("detection_rules_", "").replace(".json", "")
-                if version not in existing_versions:
-                    filepath = os.path.join(self.config_dir, filename)
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        config = json.load(f)
-                    rv = RuleVersion(
-                        version=version,
-                        description=config.get("description", ""),
-                        created_at=datetime.fromisoformat(config.get("created_at", datetime.now().isoformat())),
-                        based_on=config.get("based_on"),
-                        rule_config=json.dumps(config, ensure_ascii=False),
-                        is_active=(version == "v1" and "active" not in existing_versions)
-                    )
-                    self.db.add(rv)
+                version_files.append((version, filename))
+
+        version_files.sort(key=lambda x: x[0], reverse=True)
+
+        for version, filename in version_files:
+            if version not in existing_versions:
+                filepath = os.path.join(self.config_dir, filename)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+                rv = RuleVersion(
+                    version=version,
+                    description=config.get("description", ""),
+                    created_at=datetime.fromisoformat(config.get("created_at", datetime.now().isoformat())),
+                    based_on=config.get("based_on"),
+                    rule_config=json.dumps(config, ensure_ascii=False),
+                    is_active=(not has_active)
+                )
+                self.db.add(rv)
+                if not has_active:
+                    has_active = True
         self.db.commit()
 
     def get_all_versions(self) -> List[RuleVersion]:
