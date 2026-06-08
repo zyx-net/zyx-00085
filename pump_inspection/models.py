@@ -21,7 +21,7 @@ class Batch(Base):
     anomalies = relationship("Anomaly", back_populates="batch", cascade="all, delete-orphan")
     sensor_readings = relationship("SensorReading", back_populates="batch", cascade="all, delete-orphan")
     review_records = relationship("ReviewRecord", back_populates="batch", cascade="all, delete-orphan")
-    remarks = relationship("Remark", back_populates="batch", cascade="all, delete-orphan", foreign_keys="Remark.batch_id")
+    remarks = relationship("Remark", back_populates="batch", cascade="all, delete-orphan")
 
 
 class SensorReading(Base):
@@ -105,7 +105,7 @@ class Anomaly(Base):
     batch = relationship("Batch", back_populates="anomalies")
     reading = relationship("SensorReading", back_populates="anomalies")
     review_records = relationship("ReviewRecord", back_populates="anomaly", cascade="all, delete-orphan")
-    remarks = relationship("Remark", back_populates="anomaly", cascade="all, delete-orphan", foreign_keys="Remark.anomaly_id")
+    remarks = relationship("Remark", back_populates="anomaly", cascade="all, delete-orphan")
 
 
 class ReviewRecord(Base):
@@ -136,24 +136,6 @@ class RuleVersion(Base):
     is_active = Column(Boolean, default=False)
 
 
-class RuleComparison(Base):
-    __tablename__ = "rule_comparisons"
-
-    id = Column(Integer, primary_key=True, index=True)
-    batch_id = Column(Integer, ForeignKey("batches.id"), nullable=False)
-    rule_version_1 = Column(String(50), nullable=False)
-    rule_version_2 = Column(String(50), nullable=False)
-    created_at = Column(DateTime, default=datetime.now)
-    comparison_data = Column(Text, nullable=False)
-    output_file_prefix = Column(String(500))
-
-    __table_args__ = (
-        UniqueConstraint('batch_id', 'rule_version_1', 'rule_version_2', name='uix_batch_rule_versions'),
-    )
-
-    batch = relationship("Batch")
-
-
 class Remark(Base):
     __tablename__ = "remarks"
 
@@ -161,13 +143,13 @@ class Remark(Base):
     batch_id = Column(Integer, ForeignKey("batches.id"), nullable=False)
     anomaly_id = Column(Integer, ForeignKey("anomalies.id"), nullable=True)
     content = Column(Text, nullable=False)
-    operator = Column(String(100), nullable=False, default="system")
-    remark_type = Column(String(50), nullable=False, default="general")
+    operator = Column(String(100), default="system")
+    remark_type = Column(String(50), default="general")
     source = Column(String(200))
-    import_key = Column(String(200))
+    import_key = Column(String(100))
     created_at = Column(DateTime, default=datetime.now)
     previous_remark_id = Column(Integer, ForeignKey("remarks.id"), nullable=True)
 
     batch = relationship("Batch", back_populates="remarks")
     anomaly = relationship("Anomaly", back_populates="remarks")
-    previous_remark = relationship("Remark", remote_side=[id], foreign_keys=[previous_remark_id])
+    previous_remark = relationship("Remark", remote_side=[id], backref="next_remarks")

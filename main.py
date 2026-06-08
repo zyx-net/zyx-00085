@@ -11,7 +11,6 @@ from pump_inspection import (
     BatchManager,
     RuleManager,
     ReportExporter,
-    RuleComparator,
 )
 
 
@@ -362,18 +361,12 @@ def cmd_import_remarks(args):
     db = SessionLocal()
     try:
         batch_manager = BatchManager(db)
-        file_path = args.file
-
-        batch = batch_manager.get_batch(args.batch_id)
-        if not batch:
-            print(f"批次 {args.batch_id} 不存在")
-            sys.exit(1)
-
-        print(f"导入备注到批次 {args.batch_id}: {file_path}")
+        file_path = args.file or os.path.join(SAMPLE_DATA_DIR, "sample_remarks.csv")
+        print(f"导入备注: {file_path}")
         success, stats, errors = batch_manager.import_remarks_from_csv(args.batch_id, file_path)
 
         if not success:
-            print(f"导入失败:")
+            print(f"导入失败，错误信息:")
             for err in errors:
                 print(f"  - {err}")
             sys.exit(1)
@@ -382,11 +375,10 @@ def cmd_import_remarks(args):
         imported = stats.get("imported", 0)
         skipped = stats.get("skipped", 0)
         failed = stats.get("failed", 0)
-
-        print(f"备注导入完成: 总计 {total} 条 (成功 {imported}, 跳过 {skipped}, 失败 {failed})")
+        print(f"备注导入完成: 总计 {total} 条 (导入 {imported}, 跳过 {skipped}, 失败 {failed})")
 
         if errors:
-            print(f"\n详细信息:")
+            print(f"详细信息:")
             for err in errors:
                 print(f"  - {err}")
     finally:
@@ -394,33 +386,16 @@ def cmd_import_remarks(args):
 
 
 def cmd_add_remark(args):
-    """给批次或异常追加备注"""
+    """单条追加备注"""
     db = SessionLocal()
     try:
         batch_manager = BatchManager(db)
-
-        batch = batch_manager.get_batch(args.batch_id)
-        if not batch:
-            print(f"批次 {args.batch_id} 不存在")
-            sys.exit(1)
-
-        if args.anomaly_id:
-            from pump_inspection.models import Anomaly
-            anomaly = db.query(Anomaly).filter(Anomaly.id == args.anomaly_id).first()
-            if not anomaly:
-                print(f"异常 {args.anomaly_id} 不存在")
-                sys.exit(1)
-            if anomaly.batch_id != args.batch_id:
-                print(f"异常 {args.anomaly_id} 不属于批次 {args.batch_id}")
-                sys.exit(1)
-
         success, remark, errors = batch_manager.add_remark(
             batch_id=args.batch_id,
             content=args.content,
             anomaly_id=args.anomaly_id,
-            operator=args.operator or "admin",
-            remark_type=args.remark_type or "general",
-            source="cli"
+            operator=args.operator or "system",
+            remark_type=args.remark_type or "general"
         )
 
         if not success:
@@ -429,150 +404,32 @@ def cmd_add_remark(args):
                 print(f"  - {err}")
             sys.exit(1)
 
-        target = f"异常 {args.anomaly_id}" if args.anomaly_id else f"批次 {args.batch_id}"
-        print(f"备注已添加到 {target}: ID={remark.id}, 操作人={remark.operator}, 时间={remark.created_at}")
-        print(f"内容: {remark.content}")
+        print(f"备注添加成功: ID={remark.id}, 类型={remark.remark_type}, 操作人={remark.operator}")
+        print(f"  内容: {remark.content}")
     finally:
         db.close()
 
 
 def cmd_list_remarks(args):
-    """列出备注"""
+    """查看备注列表"""
     db = SessionLocal()
     try:
         batch_manager = BatchManager(db)
 
-        batch = batch_manager.get_batch(args.batch_id)
-        if not batch:
-            print(f"批次 {args.batch_id} 不存在")
-            sys.exit(1)
-
-        if args.anomaly_id:
-            from pump_inspection.models import Anomaly
-            anomaly = db.query(Anomaly).filter(Anomaly.id == args.anomaly_id).first()
-            if not anomaly:
-                print(f"异常 {args.anomaly_id} 不存在")
-                sys.exit(1)
-            if anomaly.batch_id != args.batch_id:
-                print(f"异常 {args.anomaly_id} 不属于批次 {args.batch_id}")
-                sys.exit(1)
-
         if args.all:
             remarks = batch_manager.get_all_remarks(args.batch_id)
-            scope = "所有"
-        elif args.anomaly_id:
-            remarks = batch_manager.get_remarks(args.batch_id, args.anomaly_id)
-            scope = f"异常 {args.anomaly_id}"
         else:
-            remarks = batch_manager.get_remarks(args.batch_id)
-            scope = "批次"
+            remarks = batch_manager.get_remarks(args.batch_id, args.anomaly_id)
 
+        scope = "全部" if args.all else ("异常级" if args.anomaly_id else "批次级")
         print(f"批次 {args.batch_id} {scope}备注列表 (共 {len(remarks)} 条):")
         for r in remarks:
-            target = f"异常#{r.anomaly_id}" if r.anomaly_id else "批次"
-            prev_info = f" (前序ID={r.previous_remark_id})" if r.previous_remark_id else ""
-            print(f"  ID={r.id} | {target} | 类型={r.remark_type} | "
-                  f"操作人={r.operator} | 时间={r.created_at}{prev_info}")
+            anomaly_info = f", 异常ID={r.anomaly_id}" if r.anomaly_id else ""
+            import_info = f", import_key={r.import_key}" if r.import_key else ""
+            source_info = f", 来源={r.source}" if r.source else ""
+            print(f"  ID={r.id} | 类型={r.remark_type} | 操作人={r.operator}{anomaly_info}{import_info}{source_info}")
+            print(f"      时间: {r.created_at}")
             print(f"      内容: {r.content}")
-            if r.import_key:
-                print(f"      来源: {r.source or ''} import_key={r.import_key}")
-    finally:
-        db.close()
-
-
-def cmd_compare_rules(args):
-    """对比两个规则版本在同一批次数据上的检测结果差异"""
-    db = SessionLocal()
-    try:
-        comparator = RuleComparator(db)
-        exporter = ReportExporter(db)
-
-        batch_id = args.batch_id
-        version1 = args.version1
-        version2 = args.version2
-        force = args.force
-        output_prefix = args.output
-
-        print_separator(f"规则版本对比: {version1} vs {version2}")
-        print(f"批次ID: {batch_id}")
-        print()
-
-        comparison, errors = comparator.compare(batch_id, version1, version2, force=force)
-        if not comparison:
-            print("对比失败，错误信息:")
-            for err in errors:
-                print(f"  - {err}")
-            sys.exit(1)
-
-        comparison_data = comparator.load_comparison(comparison.id)
-        if not comparison_data:
-            print("对比数据加载失败")
-            sys.exit(1)
-
-        meta = comparison_data["meta"]
-        totals = comparison_data["totals"]
-        v1 = meta["rule_version_1"]
-        v2 = meta["rule_version_2"]
-
-        print("=== 对比摘要 ===")
-        print(f"  批次名称: {meta['batch_name']}")
-        print(f"  巡检记录总数: {meta['total_records']}")
-        print()
-        print(f"  版本 {v1} 异常总数: {totals['version1_total']}")
-        print(f"  版本 {v2} 异常总数: {totals['version2_total']}")
-        diff = totals['difference']
-        diff_symbol = "+" if diff > 0 else ""
-        print(f"  差异: {diff_symbol}{diff} 条")
-        print()
-        print(f"  仅在 {v1} 出现: {totals['only_in_version1']} 条")
-        print(f"  仅在 {v2} 出现: {totals['only_in_version2']} 条")
-        print(f"  两个版本都出现: {totals['in_both_versions']} 条")
-        print(f"  严重级别变化: {totals['severity_changes']} 条")
-        print()
-
-        print("=== 按异常类型汇总 ===")
-        type_codes = set(comparison_data["by_type_v1"].keys()) | set(comparison_data["by_type_v2"].keys())
-        for code in sorted(type_codes):
-            t1 = comparison_data["by_type_v1"].get(code, {})
-            t2 = comparison_data["by_type_v2"].get(code, {})
-            count1 = t1.get("数量", 0)
-            count2 = t2.get("数量", 0)
-            diff = count2 - count1
-            diff_symbol = "+" if diff > 0 else ""
-            name = t1.get("异常类型", t2.get("异常类型", code))
-            print(f"  {name} ({code}): {v1}={count1}, {v2}={count2}, 差异={diff_symbol}{diff}")
-        print()
-
-        if comparison_data["severity_changes"]:
-            print("=== 严重级别变化 ===")
-            sev_names = {"critical": "严重", "high": "高", "medium": "中", "low": "低"}
-            for change in comparison_data["severity_changes"][:5]:
-                s1 = sev_names.get(change["severity_v1"], change["severity_v1"])
-                s2 = sev_names.get(change["severity_v2"], change["severity_v2"])
-                print(f"  {change['anomaly_type']} ({change['device_id']}): {s1} -> {s2}")
-            if len(comparison_data["severity_changes"]) > 5:
-                print(f"  ... 还有 {len(comparison_data['severity_changes']) - 5} 条严重级别变化，详见 CSV")
-            print()
-
-        print("=== 导出 CSV 文件 ===")
-        files = exporter.export_rule_comparison_csv(comparison_data, output_prefix)
-        comparator.update_output_prefix(comparison.id, files["overall_summary"])
-
-        for name, path in files.items():
-            display_name = {
-                "overall_summary": "总体汇总",
-                "by_type": "按异常类型对比",
-                "by_severity": "按严重级别对比",
-                "severity_changes": "严重级别变化明细",
-                f"only_in_{v1}": f"仅在{v1}出现的异常",
-                f"only_in_{v2}": f"仅在{v2}出现的异常",
-            }.get(name, name)
-            print(f"  {display_name}: {path}")
-
-        print()
-        print(f"对比完成，结果已保存到数据库 (对比ID={comparison.id})，可跨程序重启追溯。")
-        print(f"检测来源: {v1}={meta['detection_source_v1']}, {v2}={meta['detection_source_v2']}")
-
     finally:
         db.close()
 
@@ -786,29 +643,29 @@ def main():
   # 回滚复核
   python main.py rollback --anomaly-id 1
 
+  # 导入备注（从CSV）
+  python main.py import-remarks --batch-id 1
+
+  # 追加单条备注（批次级）
+  python main.py add-remark --batch-id 1 --content "2026年6月8日停泵检修" --operator "张三" --remark-type maintenance
+
+  # 追加单条备注（异常级）
+  python main.py add-remark --batch-id 1 --anomaly-id 1 --content "经核实为传感器临时波动" --operator "李四"
+
+  # 查看批次级备注
+  python main.py list-remarks --batch-id 1
+
+  # 查看异常级备注
+  python main.py list-remarks --batch-id 1 --anomaly-id 1
+
+  # 查看全部备注
+  python main.py list-remarks --batch-id 1 --all
+
   # 导出HTML报告
   python main.py export-html --batch-id 1
 
   # 导出CSV报告
   python main.py export-csv --batch-id 1
-
-  # 从CSV导入备注
-  python main.py import-remarks --batch-id 1 --file remarks.csv
-
-  # 给异常追加备注
-  python main.py add-remark --batch-id 1 --anomaly-id 5 --content "停泵检修，更换密封圈" --operator "张三" --remark-type maintenance
-
-  # 给批次追加备注
-  python main.py add-remark --batch-id 1 --content "传感器临时更换，数据可能波动" --operator "李四" --remark-type sensor_replacement
-
-  # 查看所有备注
-  python main.py list-remarks --batch-id 1 --all
-
-  # 对比两个规则版本在同一批次上的检测结果
-  python main.py compare-rules --batch-id 1 --version1 v1 --version2 v2
-
-  # 对比并强制覆盖已有结果
-  python main.py compare-rules --batch-id 1 --version1 v1 --version2 v2 --force
 
   # 运行完整演示流程
   python main.py run-full-flow
@@ -911,33 +768,24 @@ def main():
     # import-remarks
     p = subparsers.add_parser("import-remarks", help="从CSV导入备注")
     p.add_argument("--batch-id", type=int, required=True, help="批次ID")
-    p.add_argument("--file", required=True, help="备注CSV文件路径")
+    p.add_argument("--file", help="备注CSV文件路径，默认使用 sample_data/sample_remarks.csv")
     p.set_defaults(func=cmd_import_remarks)
 
     # add-remark
-    p = subparsers.add_parser("add-remark", help="给批次或异常追加备注")
+    p = subparsers.add_parser("add-remark", help="单条追加备注")
     p.add_argument("--batch-id", type=int, required=True, help="批次ID")
-    p.add_argument("--anomaly-id", type=int, help="异常ID（不填则为批次备注）")
+    p.add_argument("--anomaly-id", type=int, help="异常ID（异常级备注），不填则为批次级备注")
     p.add_argument("--content", required=True, help="备注内容")
-    p.add_argument("--operator", default="admin", help="操作人")
-    p.add_argument("--remark-type", default="general", help="备注类型，如：maintenance, sensor_replacement, manual_entry")
+    p.add_argument("--operator", help="操作人，默认 system")
+    p.add_argument("--remark-type", help="备注类型，默认 general，可选: maintenance, sensor_replacement, manual_entry, general")
     p.set_defaults(func=cmd_add_remark)
 
     # list-remarks
-    p = subparsers.add_parser("list-remarks", help="列出备注")
+    p = subparsers.add_parser("list-remarks", help="查看备注列表")
     p.add_argument("--batch-id", type=int, required=True, help="批次ID")
-    p.add_argument("--anomaly-id", type=int, help="按异常ID过滤")
-    p.add_argument("--all", action="store_true", help="显示所有备注（含批次和异常）")
+    p.add_argument("--anomaly-id", type=int, help="按异常ID过滤（只看该异常的备注）")
+    p.add_argument("--all", action="store_true", help="显示全部备注（批次级+异常级）")
     p.set_defaults(func=cmd_list_remarks)
-
-    # compare-rules
-    p = subparsers.add_parser("compare-rules", help="对比两个规则版本在同一批次上的检测结果差异")
-    p.add_argument("--batch-id", type=int, required=True, help="批次ID")
-    p.add_argument("--version1", required=True, help="第一个规则版本号，如 v1")
-    p.add_argument("--version2", required=True, help="第二个规则版本号，如 v2")
-    p.add_argument("--output", help="输出文件名前缀（不包含扩展名）")
-    p.add_argument("--force", action="store_true", help="强制覆盖已存在的对比结果")
-    p.set_defaults(func=cmd_compare_rules)
 
     # run-full-flow
     p = subparsers.add_parser("run-full-flow", help="运行完整演示流程")
