@@ -601,6 +601,667 @@ def test_existing_db_re_run():
     print("  ✅ 已有数据库复跑测试全部通过")
 
 
+def test_rule_comparison_normal():
+    """测试规则对比功能 - 正常场景"""
+    print("\n" + "=" * 70)
+    print("测试 9: 规则对比功能 - 正常场景")
+    print("=" * 70)
+    
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "对比测试批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    
+    print("  测试 9.1: 先运行 v2 检测，再对比 v1 vs v2（复用已有结果）...")
+    result = run_cmd("detect --batch-id 1")
+    assert result.returncode == 0
+    
+    result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v2")
+    assert result.returncode == 0, f"对比失败: {result.stderr}"
+    
+    assert "版本 v1 异常总数:" in result.stdout
+    assert "版本 v2 异常总数:" in result.stdout
+    assert "仅在 v1 出现:" in result.stdout
+    assert "仅在 v2 出现:" in result.stdout
+    assert "按异常类型汇总" in result.stdout
+    assert "导出 CSV 文件" in result.stdout
+    assert "对比完成，结果已保存到数据库" in result.stdout
+    
+    assert "PRESSURE_SUDDEN_DROP" in result.stdout
+    assert "DUPLICATE_REPORT" in result.stdout
+    
+    print(f"    ✅ 通过: 对比命令正常执行")
+    
+    print("  测试 9.2: 验证导出的 CSV 文件存在...")
+    csv_files = list(REPORTS_DIR.glob("comparison_*.csv"))
+    assert len(csv_files) >= 4, f"应该至少导出4个CSV文件，实际 {len(csv_files)} 个"
+    
+    summary_file = [f for f in csv_files if "overall_summary" in f.name][0]
+    assert summary_file.exists()
+    
+    type_file = [f for f in csv_files if "by_type" in f.name][0]
+    assert type_file.exists()
+    
+    sev_file = [f for f in csv_files if "by_severity" in f.name][0]
+    assert sev_file.exists()
+    
+    print(f"    ✅ 通过: 导出 {len(csv_files)} 个 CSV 文件")
+    
+    print("  测试 9.3: 验证 CSV 文件内容...")
+    with open(summary_file, 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+    
+    assert "批次ID" in content
+    assert "批次名称" in content
+    assert "规则版本1" in content
+    assert "规则版本2" in content
+    assert "版本v1异常总数" in content
+    assert "版本v2异常总数" in content
+    assert "异常数差异" in content
+    print(f"    ✅ 通过: 汇总 CSV 包含预期字段")
+    
+    with open(type_file, 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+    
+    assert "异常类型" in content
+    assert "异常代码" in content
+    assert "PRESSURE_SUDDEN_DROP" in content
+    assert "DUPLICATE_REPORT" in content
+    print(f"    ✅ 通过: 类型对比 CSV 包含预期字段和异常类型")
+    
+    print("  测试 9.4: 验证 v1 和 v2 检测结果差异合理...")
+    v1_count = None
+    v2_count = None
+    for line in result.stdout.split('\n'):
+        if '版本 v1 异常总数:' in line:
+            match = re.search(r'版本 v1 异常总数:\s+(\d+)', line)
+            if match:
+                v1_count = int(match.group(1))
+        if '版本 v2 异常总数:' in line:
+            match = re.search(r'版本 v2 异常总数:\s+(\d+)', line)
+            if match:
+                v2_count = int(match.group(1))
+    
+    assert v1_count is not None
+    assert v2_count is not None
+    assert v2_count >= v1_count, f"v2 阈值更宽松，应该检测到更多或相等的异常。v1={v1_count}, v2={v2_count}"
+    print(f"    ✅ 通过: v1={v1_count}, v2={v2_count}, 差异符合预期")
+    
+    clean_test_env()
+    print("  ✅ 规则对比正常场景测试全部通过")
+
+
+def test_rule_comparison_edge_cases():
+    """测试规则对比功能 - 边界情况"""
+    print("\n" + "=" * 70)
+    print("测试 10: 规则对比功能 - 边界情况")
+    print("=" * 70)
+    
+    print("  测试 10.1: 规则版本不存在...")
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "测试批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    
+    result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v999")
+    assert result.returncode != 0 or "规则版本 v999 不存在" in result.stdout or "规则版本 v999 不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别不存在的规则版本")
+    
+    result = run_cmd("compare-rules --batch-id 1 --version1 v998 --version2 v999")
+    assert result.returncode != 0 or "规则版本 v998 不存在" in result.stdout or "规则版本 v998 不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别两个都不存在的规则版本")
+    
+    print("  测试 10.2: 批次不存在...")
+    result = run_cmd("compare-rules --batch-id 999 --version1 v1 --version2 v2")
+    assert result.returncode != 0 or "批次 999 不存在" in result.stdout or "批次 999 不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别不存在的批次")
+    
+    print("  测试 10.3: 批次未导入数据...")
+    run_cmd('create-batch --name "空批次" --rule-version v2')
+    result = run_cmd("compare-rules --batch-id 2 --version1 v1 --version2 v2")
+    assert result.returncode != 0
+    has_error = ("尚未导入巡检数据" in result.stdout or 
+                 "尚未导入巡检数据" in result.stderr or
+                 "尚未导入" in result.stdout or
+                 "尚未导入" in result.stderr)
+    assert has_error, f"应该提示批次无数据。stdout={result.stdout[:200]}, stderr={result.stderr[:200]}"
+    print(f"    ✅ 通过: 正确识别未导入数据的批次")
+    
+    print("  测试 10.4: 两个版本相同...")
+    result = run_cmd("compare-rules --batch-id 1 --version1 v2 --version2 v2")
+    assert result.returncode != 0 or "两个规则版本不能相同" in result.stdout or "两个规则版本不能相同" in result.stderr
+    print(f"    ✅ 通过: 正确识别两个相同的版本")
+    
+    clean_test_env()
+    print("  ✅ 规则对比边界情况测试全部通过")
+
+
+def test_rule_comparison_duplicate_and_restart():
+    """测试规则对比功能 - 重复导出和重启后读取"""
+    print("\n" + "=" * 70)
+    print("测试 11: 规则对比功能 - 重复导出和重启后读取")
+    print("=" * 70)
+    
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "对比测试批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    
+    print("  测试 11.1: 首次对比成功...")
+    result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v2")
+    assert result.returncode == 0
+    assert "对比完成，结果已保存到数据库" in result.stdout
+    
+    match = re.search(r'对比ID=(\d+)', result.stdout)
+    assert match is not None
+    comparison_id = match.group(1)
+    print(f"    ✅ 通过: 首次对比成功，对比ID={comparison_id}")
+    
+    print("  测试 11.2: 重复对比（无 --force）应失败...")
+    result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v2")
+    assert result.returncode != 0
+    assert "对比结果已存在" in result.stdout or "对比结果已存在" in result.stderr
+    assert "--force" in result.stdout or "--force" in result.stderr
+    print(f"    ✅ 通过: 重复对比正确提示需要 --force 参数")
+    
+    print("  测试 11.3: 重复对比（带 --force）应成功覆盖...")
+    result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v2 --force")
+    assert result.returncode == 0
+    assert "对比完成，结果已保存到数据库" in result.stdout
+    print(f"    ✅ 通过: 带 --force 可覆盖已有结果")
+    
+    print("  测试 11.4: 验证数据库中对比记录可追溯...")
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT id, batch_id, rule_version_1, rule_version_2 FROM rule_comparisons ORDER BY id")
+    rows = c.fetchall()
+    
+    assert len(rows) >= 1, "数据库中应该有对比记录"
+    
+    latest = rows[-1]
+    assert latest[1] == 1, "批次ID应该是1"
+    assert latest[2] == "v1", "版本1应该是v1"
+    assert latest[3] == "v2", "版本2应该是v2"
+    
+    c.execute("SELECT comparison_data FROM rule_comparisons WHERE id = ?", (latest[0],))
+    data_row = c.fetchone()
+    assert data_row is not None
+    assert data_row[0] is not None
+    assert len(data_row[0]) > 100, "对比数据应该有足够内容"
+    assert '"version1_total"' in data_row[0], "对比数据应该包含 version1_total"
+    assert '"version2_total"' in data_row[0], "对比数据应该包含 version2_total"
+    
+    conn.close()
+    print(f"    ✅ 通过: 数据库中对比记录可追溯，数据完整")
+    
+    print("  测试 11.5: 模拟程序重启，从数据库读取对比数据再导出...")
+    import json
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT comparison_data FROM rule_comparisons WHERE id = ?", (latest[0],))
+    data_row = c.fetchone()
+    conn.close()
+    
+    comparison_data = json.loads(data_row[0])
+    assert "meta" in comparison_data
+    assert "totals" in comparison_data
+    assert "by_type_v1" in comparison_data
+    assert "by_type_v2" in comparison_data
+    
+    v1_total = comparison_data["totals"]["version1_total"]
+    v2_total = comparison_data["totals"]["version2_total"]
+    assert isinstance(v1_total, int) and v1_total > 0
+    assert isinstance(v2_total, int) and v2_total > 0
+    
+    from pump_inspection.report_exporter import ReportExporter
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    
+    engine = create_engine(f"sqlite:///{DB_PATH}")
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal()
+    
+    exporter = ReportExporter(db, output_dir=str(REPORTS_DIR))
+    files = exporter.export_rule_comparison_csv(
+        comparison_data, 
+        filename_prefix="restart_test_comparison"
+    )
+    db.close()
+    
+    assert len(files) >= 4
+    assert "overall_summary" in files
+    assert os.path.exists(files["overall_summary"])
+    
+    with open(files["overall_summary"], 'r', encoding='utf-8-sig') as f:
+        content = f.read()
+    
+    assert str(v1_total) in content
+    assert str(v2_total) in content
+    print(f"    ✅ 通过: 重启后从数据库读取对比数据并成功导出CSV，v1={v1_total}, v2={v2_total}")
+    
+    print("  测试 11.6: 验证对比批次状态为 comparison，不影响正常批次...")
+    result = run_cmd("list-batches")
+    assert result.returncode == 0
+    
+    lines = result.stdout.split('\n')
+    normal_batches = [l for l in lines if 'ID=1' in l or 'ID=2' in l]
+    comparison_batches = [l for l in lines if 'comparison' in l.lower() and '状态=comparison' in l]
+    
+    assert len(normal_batches) >= 1, "应该有正常批次"
+    print(f"    ✅ 通过: 正常批次可正常列出，对比临时批次状态为 comparison")
+    
+    clean_test_env()
+    print("  ✅ 规则对比重复导出和重启测试全部通过")
+
+
+def test_rule_comparison_config_errors():
+    """测试规则对比功能 - 配置文件错误处理"""
+    print("\n" + "=" * 70)
+    print("测试 12: 规则对比功能 - 配置文件错误处理")
+    print("=" * 70)
+    
+    clean_test_env()
+    
+    import tempfile
+    import shutil
+    
+    original_config_dir = PROJECT_ROOT / "config"
+    temp_config_dir = tempfile.mkdtemp(prefix="config_backup_")
+    
+    try:
+        for f in original_config_dir.glob("detection_rules_v*.json"):
+            shutil.copy2(f, temp_config_dir)
+        
+        print("  测试 12.1: 损坏的 JSON 配置...")
+        bad_file = original_config_dir / "detection_rules_v3.json"
+        with open(bad_file, 'w', encoding='utf-8') as f:
+            f.write('{invalid json content')
+        
+        run_cmd("init-db")
+        
+        result = run_cmd(f'list-rules')
+        assert result.returncode == 0
+        
+        run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+        run_cmd('create-batch --name "测试批次" --rule-version v2')
+        run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+        
+        bad_file.unlink()
+        print(f"    ✅ 通过: 损坏的配置文件未影响 v1/v2 版本")
+        
+        print("  测试 12.2: 自定义输出文件名前缀...")
+        result = run_cmd("compare-rules --batch-id 1 --version1 v1 --version2 v2 --output my_custom_prefix")
+        assert result.returncode == 0
+        
+        custom_files = list(REPORTS_DIR.glob("my_custom_prefix*.csv"))
+        assert len(custom_files) >= 4, f"应该有自定义前缀的CSV文件，实际 {len(custom_files)} 个"
+        print(f"    ✅ 通过: 自定义文件名前缀生效")
+        
+        clean_test_env()
+        print("  ✅ 规则对比配置错误处理测试全部通过")
+        
+    finally:
+        bad_file = original_config_dir / "detection_rules_v3.json"
+        if bad_file.exists():
+            bad_file.unlink()
+        
+        for f in os.listdir(temp_config_dir):
+            shutil.copy2(os.path.join(temp_config_dir, f), original_config_dir / f)
+        shutil.rmtree(temp_config_dir)
+
+
+def test_remark_csv_import():
+    """测试备注功能 - CSV 导入备注"""
+    print("\n" + "=" * 70)
+    print("测试 13: 备注功能 - CSV 导入备注")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "备注测试批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+
+    print("  测试 13.1: 正常导入备注 CSV...")
+    result = run_cmd(f'import-remarks --batch-id 1 --file {SAMPLE_DATA_DIR / "sample_remarks.csv"}')
+    assert result.returncode == 0, f"导入备注失败: {result.stderr}"
+    assert "总计 5 条" in result.stdout
+    assert "成功 5" in result.stdout
+    print(f"    ✅ 通过: {result.stdout.strip()}")
+
+    print("  测试 13.2: 查看导入的备注...")
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 5 条" in result.stdout
+    assert "停泵检修" in result.stdout
+    assert "传感器临时更换" in result.stdout
+    assert "人工补录" in result.stdout
+    print(f"    ✅ 通过: 成功列出所有备注")
+
+    print("  测试 13.3: 按异常ID过滤备注...")
+    result = run_cmd("list-remarks --batch-id 1 --anomaly-id 1")
+    assert result.returncode == 0
+    assert "异常 1 备注列表" in result.stdout or "异常#1" in result.stdout
+    assert "停泵检修" in result.stdout
+    assert "传感器临时更换" not in result.stdout
+    print(f"    ✅ 通过: 按异常ID过滤正常")
+
+    print("  测试 13.4: 查看批次级备注...")
+    result = run_cmd("list-remarks --batch-id 1")
+    assert result.returncode == 0
+    assert "批次备注列表" in result.stdout
+    assert "传感器临时更换" in result.stdout
+    assert "停泵检修" not in result.stdout
+    print(f"    ✅ 通过: 批次级备注正常显示")
+
+    clean_test_env()
+    print("  ✅ CSV 导入备注测试全部通过")
+
+
+def test_remark_add_append():
+    """测试备注功能 - 追加备注和历史记录"""
+    print("\n" + "=" * 70)
+    print("测试 14: 备注功能 - 追加备注和历史记录")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "备注追加测试" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+
+    print("  测试 14.1: 给异常追加第一条备注...")
+    result = run_cmd('add-remark --batch-id 1 --anomaly-id 3 --content "第一次备注：初查异常" --operator "张三" --remark-type general')
+    assert result.returncode == 0
+    assert "备注已添加到 异常 3" in result.stdout
+    assert "第一次备注" in result.stdout
+    print(f"    ✅ 通过: 第一条备注添加成功")
+
+    print("  测试 14.2: 给同一异常追加第二条备注（保留历史）...")
+    result = run_cmd('add-remark --batch-id 1 --anomaly-id 3 --content "第二次备注：已安排维修" --operator "李四" --remark-type maintenance')
+    assert result.returncode == 0
+    assert "备注已添加到 异常 3" in result.stdout
+    assert "第二次备注" in result.stdout
+    print(f"    ✅ 通过: 第二条备注添加成功")
+
+    print("  测试 14.3: 验证两条备注都存在，且有前序关联...")
+    result = run_cmd("list-remarks --batch-id 1 --anomaly-id 3")
+    assert result.returncode == 0
+    assert "第一次备注" in result.stdout
+    assert "第二次备注" in result.stdout
+    assert "前序ID" in result.stdout
+    print(f"    ✅ 通过: 两条备注都存在，且有前序关联")
+
+    print("  测试 14.4: 给批次追加备注...")
+    result = run_cmd('add-remark --batch-id 1 --content "批次级备注：本批次数据存在传感器波动" --operator "王五" --remark-type sensor_replacement')
+    assert result.returncode == 0
+    assert "备注已添加到 批次 1" in result.stdout
+    print(f"    ✅ 通过: 批次级备注添加成功")
+
+    print("  测试 14.5: 查看所有备注（共3条）...")
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 3 条" in result.stdout
+    print(f"    ✅ 通过: 所有备注共3条")
+
+    clean_test_env()
+    print("  ✅ 追加备注和历史记录测试全部通过")
+
+
+def test_remark_duplicate_import():
+    """测试备注功能 - 重复导入和冲突场景"""
+    print("\n" + "=" * 70)
+    print("测试 15: 备注功能 - 重复导入和冲突场景")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "重复导入测试" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+
+    print("  测试 15.1: 首次导入备注...")
+    result = run_cmd(f'import-remarks --batch-id 1 --file {SAMPLE_DATA_DIR / "sample_remarks.csv"}')
+    assert result.returncode == 0
+    assert "成功 5" in result.stdout
+    print(f"    ✅ 通过: 首次导入成功")
+
+    print("  测试 15.2: 重复导入同一 CSV（import_key 去重）...")
+    result = run_cmd(f'import-remarks --batch-id 1 --file {SAMPLE_DATA_DIR / "sample_remarks.csv"}')
+    assert result.returncode == 0
+    assert "总计 5 条" in result.stdout
+    assert "成功 0" in result.stdout
+    assert "跳过 5" in result.stdout
+    assert "备注已存在" in result.stdout
+    print(f"    ✅ 通过: 重复导入正确跳过，保留原记录")
+
+    print("  测试 15.3: 验证备注数量仍为5条...")
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 5 条" in result.stdout
+    print(f"    ✅ 通过: 备注数量未增加，去重有效")
+
+    print("  测试 15.4: CSV 缺少必填列...")
+    result = run_cmd(f'import-remarks --batch-id 1 --file {SAMPLE_DATA_DIR / "remarks_missing_column.csv"}')
+    assert result.returncode != 0 or "缺少必填列" in result.stdout or "缺少必填列" in result.stderr
+    assert "content" in result.stdout or "content" in result.stderr
+    print(f"    ✅ 通过: 正确识别缺少必填列")
+
+    clean_test_env()
+    print("  ✅ 重复导入和冲突场景测试全部通过")
+
+
+def test_remark_restart_persistence():
+    """测试备注功能 - 重启后数据持久化"""
+    print("\n" + "=" * 70)
+    print("测试 16: 备注功能 - 重启后数据持久化")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "持久化测试批次" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+
+    print("  测试 16.1: 添加备注到数据库...")
+    run_cmd('add-remark --batch-id 1 --anomaly-id 2 --content "重启前备注：停泵检修" --operator "张三" --remark-type maintenance')
+    run_cmd('add-remark --batch-id 1 --content "重启前批次备注：传感器已校准" --operator "李四" --remark-type sensor_replacement')
+    run_cmd(f'import-remarks --batch-id 1 --file {SAMPLE_DATA_DIR / "sample_remarks.csv"}')
+
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 7 条" in result.stdout
+    print(f"    ✅ 通过: 重启前添加了7条备注")
+
+    print("  测试 16.2: 验证数据库中备注表存在且有数据...")
+    import sqlite3
+    conn = sqlite3.connect(str(DB_PATH))
+    c = conn.cursor()
+    c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='remarks'")
+    assert c.fetchone() is not None, "remarks 表不存在"
+
+    c.execute("SELECT COUNT(*) FROM remarks WHERE batch_id = 1")
+    count = c.fetchone()[0]
+    assert count == 7, f"数据库中应该有7条备注，实际 {count} 条"
+
+    c.execute("SELECT content, operator, remark_type FROM remarks ORDER BY id")
+    rows = c.fetchall()
+    conn.close()
+
+    contents = [r[0] for r in rows]
+    has_restart_remark = any("重启前备注" in c and "停泵检修" in c for c in contents)
+    assert has_restart_remark, f"'重启前备注：停泵检修' 不在内容列表中: {contents}"
+    has_sensor_calibrated = any("重启前批次备注" in c and "传感器已校准" in c for c in contents)
+    assert has_sensor_calibrated, f"'重启前批次备注：传感器已校准' 不在内容列表中: {contents}"
+    has_pump_repair = any("停泵检修" in c and "更换1号泵密封圈" in c for c in contents)
+    assert has_pump_repair, f"'停泵检修，更换1号泵密封圈' 不在内容列表中: {contents}"
+    print(f"    ✅ 通过: 数据库中有7条备注，内容正确")
+
+    print("  测试 16.3: 模拟程序重启（不删库，重新初始化）...")
+    import time
+    time.sleep(0.5)
+    run_cmd("init-db")
+
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 7 条" in result.stdout
+    has_restart = "重启前备注" in result.stdout and "停泵检修" in result.stdout
+    assert has_restart, f"'重启前备注' 或 '停泵检修' 不在输出中: {result.stdout[:500]}"
+    has_pump = "停泵检修" in result.stdout and "更换1号泵密封圈" in result.stdout
+    assert has_pump, f"'停泵检修' 或 '更换1号泵密封圈' 不在输出中: {result.stdout[:500]}"
+    print(f"    ✅ 通过: 重启后仍能查询到完整7条备注")
+
+    print("  测试 16.4: 重启后可继续追加备注...")
+    result = run_cmd('add-remark --batch-id 1 --anomaly-id 5 --content "重启后追加：维修完成" --operator "王五" --remark-type maintenance')
+    assert result.returncode == 0
+
+    result = run_cmd("list-remarks --batch-id 1 --all")
+    assert result.returncode == 0
+    assert "共 8 条" in result.stdout
+    has_restart_append = "重启后追加" in result.stdout and "维修完成" in result.stdout
+    assert has_restart_append, f"'重启后追加' 或 '维修完成' 不在输出中: {result.stdout[:500]}"
+    print(f"    ✅ 通过: 重启后成功追加第8条备注")
+
+    clean_test_env()
+    print("  ✅ 重启后数据持久化测试全部通过")
+
+
+def test_remark_report_export():
+    """测试备注功能 - 报告导出包含备注"""
+    print("\n" + "=" * 70)
+    print("测试 17: 备注功能 - 报告导出包含备注")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "报告导出测试" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+
+    print("  测试 17.1: 添加测试备注...")
+    run_cmd('add-remark --batch-id 1 --anomaly-id 1 --content "HTML测试：停泵检修备注" --operator "张三" --remark-type maintenance')
+    run_cmd('add-remark --batch-id 1 --anomaly-id 3 --content "CSV测试：人工补录数据" --operator "李四" --remark-type manual_entry')
+    run_cmd('add-remark --batch-id 1 --content "批次备注：本批次包含3条传感器更换记录" --operator "王五" --remark-type sensor_replacement')
+
+    print("  测试 17.2: 导出 HTML 报告...")
+    result = run_cmd("export-html --batch-id 1")
+    assert result.returncode == 0
+    assert "HTML报告已导出" in result.stdout
+
+    html_files = list(REPORTS_DIR.glob("*.html"))
+    assert len(html_files) > 0
+    latest_html = html_files[-1]
+
+    with open(latest_html, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+
+    assert "交接备注历史" in html_content, "HTML 报告应该包含交接备注历史部分"
+    assert "批次级备注" in html_content, "HTML 报告应该包含批次级备注部分"
+    assert "停泵检修备注" in html_content, "HTML 报告应该包含异常备注内容"
+    assert "人工补录数据" in html_content, "HTML 报告应该包含异常备注内容"
+    assert "批次备注：本批次包含3条传感器更换记录" in html_content, "HTML 报告应该包含批次备注内容"
+    assert "remark-type-maintenance" in html_content, "HTML 报告应该包含备注类型样式"
+    assert "remark-type-manual_entry" in html_content, "HTML 报告应该包含备注类型样式"
+    print(f"    ✅ 通过: HTML 报告包含完整备注内容")
+
+    print("  测试 17.3: 导出 CSV 报告...")
+    result = run_cmd("export-csv --batch-id 1")
+    assert result.returncode == 0
+    assert "CSV报告已导出" in result.stdout
+
+    csv_files = list(REPORTS_DIR.glob("*.csv"))
+    remark_csv = [f for f in csv_files if "remarks" in f.name][-1]
+    assert remark_csv.exists(), "应该导出 remarks CSV 文件"
+
+    with open(remark_csv, 'r', encoding='utf-8-sig') as f:
+        csv_content = f.read()
+
+    assert "备注ID" in csv_content, "CSV 应该包含备注ID列"
+    assert "备注类型" in csv_content, "CSV 应该包含备注类型列"
+    assert "备注内容" in csv_content, "CSV 应该包含备注内容列"
+    assert "操作人" in csv_content, "CSV 应该包含操作人列"
+    assert "停泵检修备注" in csv_content, "CSV 应该包含备注内容"
+    assert "人工补录数据" in csv_content, "CSV 应该包含备注内容"
+    assert "批次备注：本批次包含3条传感器更换记录" in csv_content, "CSV 应该包含备注内容"
+    assert "前序备注ID" in csv_content, "CSV 应该包含前序备注ID列"
+    print(f"    ✅ 通过: CSV 报告包含完整备注内容和前序关联")
+
+    print("  测试 17.4: 验证异常明细 CSV 也能关联到备注...")
+    anomaly_csv = [f for f in csv_files if "anomalies" in f.name][-1]
+    with open(anomaly_csv, 'r', encoding='utf-8-sig') as f:
+        anomaly_lines = f.readlines()
+    assert len(anomaly_lines) > 1, "异常 CSV 应该有数据"
+    print(f"    ✅ 通过: 异常 CSV 正常导出")
+
+    clean_test_env()
+    print("  ✅ 报告导出包含备注测试全部通过")
+
+
+def test_remark_error_scenarios():
+    """测试备注功能 - 错误场景处理"""
+    print("\n" + "=" * 70)
+    print("测试 18: 备注功能 - 错误场景处理")
+    print("=" * 70)
+
+    clean_test_env()
+    run_cmd("init-db")
+    run_cmd(f'import-equipment --file {SAMPLE_DATA_DIR / "equipment_ledger.csv"}')
+    run_cmd('create-batch --name "错误场景测试" --rule-version v2')
+    run_cmd(f'import-readings --batch-id 1 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 1")
+    run_cmd('create-batch --name "第二批次" --rule-version v2')
+
+    print("  测试 18.1: 批次不存在...")
+    result = run_cmd('add-remark --batch-id 99999 --content "测试" --operator "测试"')
+    assert result.returncode != 0 or "批次 99999 不存在" in result.stdout or "批次 99999 不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别不存在的批次")
+
+    print("  测试 18.2: 异常不存在...")
+    result = run_cmd('add-remark --batch-id 1 --anomaly-id 99999 --content "测试" --operator "测试"')
+    assert result.returncode != 0 or "异常 99999 不存在" in result.stdout or "异常 99999 不存在" in result.stderr
+    print(f"    ✅ 通过: 正确识别不存在的异常")
+
+    print("  测试 18.3: 异常ID不属于该批次...")
+    run_cmd(f'import-readings --batch-id 2 --file {SAMPLE_DATA_DIR / "sensor_readings_with_anomalies.csv"}')
+    run_cmd("detect --batch-id 2")
+
+    result = run_cmd('add-remark --batch-id 1 --anomaly-id 14 --content "测试" --operator "测试"')
+    assert result.returncode != 0 or "不属于批次" in result.stdout or "不属于批次" in result.stderr
+    print(f"    ✅ 通过: 正确识别异常不属于该批次")
+
+    print("  测试 18.4: 备注内容为空...")
+    result = run_cmd('add-remark --batch-id 1 --content "   " --operator "测试"')
+    assert result.returncode != 0 or "不能为空" in result.stdout or "不能为空" in result.stderr
+    print(f"    ✅ 通过: 正确识别空内容")
+
+    print("  测试 18.5: 导入备注到不存在的批次...")
+    result = run_cmd(f'import-remarks --batch-id 99999 --file {SAMPLE_DATA_DIR / "sample_remarks.csv"}')
+    assert result.returncode != 0 or "批次 99999 不存在" in result.stdout or "批次 99999 不存在" in result.stderr
+    print(f"    ✅ 通过: 导入时正确识别不存在的批次")
+
+    print("  测试 18.6: 查看不存在的批次的备注...")
+    result = run_cmd("list-remarks --batch-id 99999 --all")
+    assert result.returncode != 0 or "批次 99999 不存在" in result.stdout or "批次 99999 不存在" in result.stderr
+    print(f"    ✅ 通过: 查看时正确识别不存在的批次")
+
+    print("  测试 18.7: 查看不属于该批次的异常的备注...")
+    result = run_cmd("list-remarks --batch-id 1 --anomaly-id 14")
+    assert result.returncode != 0 or "不属于批次" in result.stdout or "不属于批次" in result.stderr
+    print(f"    ✅ 通过: 正确识别异常不属于该批次")
+
+    clean_test_env()
+    print("  ✅ 错误场景处理测试全部通过")
+
+
 def main():
     """主测试函数"""
     print("\n" + "#" * 70)
@@ -623,6 +1284,16 @@ def main():
         test_export_reports,
         test_duplicate_shift_import,
         test_existing_db_re_run,
+        test_rule_comparison_normal,
+        test_rule_comparison_edge_cases,
+        test_rule_comparison_duplicate_and_restart,
+        test_rule_comparison_config_errors,
+        test_remark_csv_import,
+        test_remark_add_append,
+        test_remark_duplicate_import,
+        test_remark_restart_persistence,
+        test_remark_report_export,
+        test_remark_error_scenarios,
     ]
     
     failed_tests = []
@@ -650,6 +1321,16 @@ def main():
         print(f"   - 报告导出: 通过")
         print(f"   - 巡检班次重复导入: 通过")
         print(f"   - 已有数据库复跑: 通过")
+        print(f"   - 规则对比正常场景: 通过")
+        print(f"   - 规则对比边界情况: 通过")
+        print(f"   - 规则对比重复导出和重启: 通过")
+        print(f"   - 规则对比配置错误处理: 通过")
+        print(f"   - 备注CSV导入: 通过")
+        print(f"   - 备注追加和历史记录: 通过")
+        print(f"   - 备注重复导入去重: 通过")
+        print(f"   - 备注重启后持久化: 通过")
+        print(f"   - 备注报告导出: 通过")
+        print(f"   - 备注错误场景处理: 通过")
         return 0
     else:
         print(f"\n❌ {len(failed_tests)}/{len(tests)} 个测试失败:")

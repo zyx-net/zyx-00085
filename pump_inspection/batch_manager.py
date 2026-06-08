@@ -4,7 +4,7 @@ import os
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
-from .models import Batch, SensorReading, InspectionShift, EquipmentLedger, Anomaly, ReviewRecord
+from .models import Batch, SensorReading, InspectionShift, EquipmentLedger, Anomaly, ReviewRecord, Remark
 from .field_mapper import FieldMapper
 from .validator import DataValidator
 from .anomaly_detector import AnomalyDetector
@@ -337,3 +337,141 @@ class BatchManager:
                 elif a.review_result == "false_positive":
                     summary[key]["false_positive"] += 1
         return summary
+
+    def add_remark(self, batch_id: int, content: str, anomaly_id: Optional[int] = None,
+                   operator: str = "system", remark_type: str = "general",
+                   source: Optional[str] = None, import_key: Optional[str] = None) -> Tuple[bool, Optional[Remark], List[str]]:
+        errors = []
+
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if not batch:
+            return False, None, [f"批次 {batch_id} 不存在"]
+
+        if anomaly_id is not None:
+            anomaly = self.db.query(Anomaly).filter(Anomaly.id == anomaly_id).first()
+            if not anomaly:
+                return False, None, [f"异常 {anomaly_id} 不存在"]
+            if anomaly.batch_id != batch_id:
+                return False, None, [f"异常 {anomaly_id} 不属于批次 {batch_id}"]
+
+        if import_key:
+            existing = self.db.query(Remark).filter(
+                Remark.batch_id == batch_id,
+                Remark.import_key == import_key
+            ).first()
+            if existing:
+                return False, None, [f"备注已存在 (import_key={import_key})，跳过导入"]
+
+        if not content or not content.strip():
+            return False, None, ["备注内容不能为空"]
+
+        last_remark = None
+        if anomaly_id:
+            last_remark = self.db.query(Remark).filter(
+                Remark.batch_id == batch_id,
+                Remark.anomaly_id == anomaly_id
+            ).order_by(Remark.created_at.desc()).first()
+        else:
+            last_remark = self.db.query(Remark).filter(
+                Remark.batch_id == batch_id,
+                Remark.anomaly_id.is_(None)
+            ).order_by(Remark.created_at.desc()).first()
+
+        remark = Remark(
+            batch_id=batch_id,
+            anomaly_id=anomaly_id,
+            content=content.strip(),
+            operator=operator or "system",
+            remark_type=remark_type or "general",
+            source=source,
+            import_key=import_key,
+            previous_remark_id=last_remark.id if last_remark else None
+        )
+
+        self.db.add(remark)
+        self.db.commit()
+        self.db.refresh(remark)
+
+        return True, remark, errors
+
+    def import_remarks_from_csv(self, batch_id: int, file_path: str) -> Tuple[bool, Dict, List[str]]:
+        errors = []
+        stats = {"total": 0, "imported": 0, "skipped": 0, "failed": 0}
+
+        batch = self.db.query(Batch).filter(Batch.id == batch_id).first()
+        if not batch:
+            return False, stats, [f"批次 {batch_id} 不存在"]
+
+        df = self._read_file(file_path)
+        if df is None:
+            return False, stats, [f"无法读取文件: {file_path}"]
+
+        required_cols = ["content"]
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            return False, stats, [f"CSV 缺少必填列: {', '.join(missing_cols)}。必填列: content；可选列: anomaly_id, operator, remark_type, import_key"]
+
+        for idx, row in df.iterrows():
+            stats["total"] += 1
+            try:
+                content = str(row.get("content", "")).strip()
+                anomaly_id = row.get("anomaly_id")
+                if anomaly_id is not None and pd.notna(anomaly_id) and str(anomaly_id).lower() != "nan":
+                    try:
+                        anomaly_id = int(anomaly_id)
+                    except (ValueError, TypeError):
+                        anomaly_id = None
+                else:
+                    anomaly_id = None
+
+                operator = str(row.get("operator", "system")).strip() if pd.notna(row.get("operator")) else "system"
+                remark_type = str(row.get("remark_type", "general")).strip() if pd.notna(row.get("remark_type")) else "general"
+                import_key = str(row.get("import_key", "")).strip() if pd.notna(row.get("import_key")) else None
+
+                if not content:
+                    errors.append(f"行 {idx + 2}: 备注内容为空，跳过")
+                    stats["skipped"] += 1
+                    continue
+
+                success, remark, err = self.add_remark(
+                    batch_id=batch_id,
+                    content=content,
+                    anomaly_id=anomaly_id,
+                    operator=operator,
+                    remark_type=remark_type,
+                    source=f"csv:{os.path.basename(file_path)}",
+                    import_key=import_key
+                )
+
+                if success:
+                    stats["imported"] += 1
+                else:
+                    errors.extend([f"行 {idx + 2}: {e}" for e in err])
+                    stats["skipped"] += 1
+
+            except Exception as e:
+                errors.append(f"行 {idx + 2}: 处理异常 - {str(e)}")
+                stats["failed"] += 1
+
+        return True, stats, errors
+
+    def get_remarks(self, batch_id: int, anomaly_id: Optional[int] = None) -> List[Remark]:
+        query = self.db.query(Remark).filter(Remark.batch_id == batch_id)
+        if anomaly_id is not None:
+            query = query.filter(Remark.anomaly_id == anomaly_id)
+        else:
+            query = query.filter(Remark.anomaly_id.is_(None))
+        return query.order_by(Remark.created_at.desc()).all()
+
+    def get_all_remarks(self, batch_id: int) -> List[Remark]:
+        return self.db.query(Remark).filter(
+            Remark.batch_id == batch_id
+        ).order_by(Remark.created_at.desc()).all()
+
+    def get_remark_history(self, remark_id: int) -> List[Remark]:
+        history = []
+        current = self.db.query(Remark).filter(Remark.id == remark_id).first()
+        while current:
+            history.append(current)
+            current = current.previous_remark
+        return history

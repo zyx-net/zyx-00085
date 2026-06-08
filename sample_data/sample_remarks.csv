@@ -1,0 +1,6 @@
+content,anomaly_id,operator,remark_type,import_key
+2026年6月8日停泵检修，更换1号泵密封圈，预计2小时完成,1,张三,maintenance,REMARK_001
+2号泵传感器临时更换为备用传感器，数据可能存在轻微波动,,李四,sensor_replacement,REMARK_002
+异常ID3为人工补录数据，来源：6月7日夜班巡检记录,3,王五,manual_entry,REMARK_003
+发现多条数据存在时间戳异常，已联系运维人员核实,,赵六,general,REMARK_004
+3号泵压力传感器校准完成，数据已恢复正常,5,张三,maintenance,REMARK_005
